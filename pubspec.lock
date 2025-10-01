@@ -139,6 +139,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.9.0"
+  plugin_platform_interface:
+    dependency: transitive
+    description:
+      name: plugin_platform_interface
+      sha256: "4820fbfdb9478b1ebae27888254d445073732dae3d6ea81f0b7e06d5dedc3f02"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.8"
+  rfid_c72_plugin:
+    dependency: "direct main"
+    description:
+      name: rfid_c72_plugin
+      sha256: "8a81542ffa5ce65d6e36d6383fc913febec9551120cfd07bc888897e631d9234"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.2"
   sky_engine:
     dependency: transitive
     description: flutter
