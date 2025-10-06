@@ -62,6 +62,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_barcode_scanner_plus:
+    dependency: "direct main"
+    description:
+      name: flutter_barcode_scanner_plus
+      sha256: "75bcf27d12ad6cd075dcfc8d838cffc254dab89cf9d33ec470faa1f9b4f97296"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.8"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -70,6 +78,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "5.0.0"
+  flutter_plugin_android_lifecycle:
+    dependency: transitive
+    description:
+      name: flutter_plugin_android_lifecycle
+      sha256: "6382ce712ff69b0f719640ce957559dde459e55ecd433c767e06d139ddf16cab"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.29"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -139,22 +155,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.9.0"
-  plugin_platform_interface:
-    dependency: transitive
-    description:
-      name: plugin_platform_interface
-      sha256: "4820fbfdb9478b1ebae27888254d445073732dae3d6ea81f0b7e06d5dedc3f02"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.1.8"
-  rfid_c72_plugin:
-    dependency: "direct main"
-    description:
-      name: rfid_c72_plugin
-      sha256: "8a81542ffa5ce65d6e36d6383fc913febec9551120cfd07bc888897e631d9234"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.2"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -226,4 +226,4 @@ packages:
     version: "14.3.0"
 sdks:
   dart: ">=3.6.2 <4.0.0"
-  flutter: ">=3.18.0-18.0.pre.54"
+  flutter: ">=3.27.0"
