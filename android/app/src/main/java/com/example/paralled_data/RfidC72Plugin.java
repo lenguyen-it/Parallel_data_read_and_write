@@ -78,6 +78,8 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
         Log.d(TAG, "🔌 onAttachedToEngine called");
+        Log.d(TAG, "🧩 activeInstance hiện tại: " + activeInstance);
+        Log.d(TAG, "🧩 this instance: " + this);
         
         if (activeInstance != null && activeInstance != this) {
             Log.w(TAG, "⚠️ Detected old instance, forcing cleanup...");
@@ -86,8 +88,17 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         
         context = binding.getApplicationContext();
         
+        // forceCleanup();
+
+        Log.d(TAG, "🧹 Running double cleanup with delay...");
         forceCleanup();
-        
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.d(TAG, "🧹 Second cleanup after delay...");
+            forceCleanup();
+        }, 1500); // 1.5 giây
+
+
         if (scanHandler == null) {
             scanHandler = new Handler(Looper.getMainLooper());
         }
@@ -147,9 +158,22 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         if (scanHandler != null) {
             scanHandler.removeCallbacksAndMessages(null);
         }
+
+        try {
+            Log.d(TAG, "🧯 Forcing BarcodeFactory releaseAll() to unlock UART...");
+            Class<?> factoryClass = Class.forName("com.rscja.barcode.BarcodeFactory");
+            java.lang.reflect.Method releaseAll = factoryClass.getDeclaredMethod("releaseAll");
+            releaseAll.setAccessible(true);
+            releaseAll.invoke(null);
+            Log.d(TAG, "✅ BarcodeFactory.releaseAll() executed successfully");
+        } catch (Exception e) {
+            Log.w(TAG, "⚠️ BarcodeFactory.releaseAll() not found or failed: " + e.getMessage());
+        }
+
         
         Log.d(TAG, "✅ Force cleanup completed");
     }
+
 
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
@@ -157,6 +181,7 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         try {
 
             forceCleanup();
+            activeInstance = null;
 
             if (methodChannel != null) {
                 methodChannel.setMethodCallHandler(null);
@@ -422,6 +447,9 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                     Log.d(TAG, "Creating new barcode decoder...");
                     synchronized (barcodeLock) {
                         barcodeDecoder = BarcodeFactory.getInstance().getBarcodeDecoder();
+                        Log.d(TAG, "BarcodeFactory instance: " + BarcodeFactory.getInstance());
+                        Log.d(TAG, "BarcodeDecoder instance before open: " + barcodeDecoder);
+                        Log.d(TAG, "Barcode open context: " + context.hashCode());
                     }
 
                     if (barcodeDecoder == null) {
@@ -701,7 +729,7 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             result.error("CLOSE_ERROR", "Lỗi đóng barcode: " + e.getMessage(), null);
         }
     }
-
+    
     @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) { 
         this.activityBinding = binding; 
