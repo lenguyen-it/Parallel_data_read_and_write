@@ -1,5 +1,8 @@
 package com.example.paralled_data;
 
+import java.util.Map;
+import java.util.HashMap;
+
 import androidx.annotation.NonNull;
 import android.util.Log;
 
@@ -53,7 +56,10 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
     // Static reference để cleanup khi hot restart
     private static RfidC72Plugin activeInstance;
 
-    // ✨ Hàm chuyển từ HEX sang ASCII
+    //Hashmap data
+    // private Map<String, Object> tagDataList = new HashMap<>();
+
+    // Hàm chuyển từ HEX sang ASCII
     private String hexToAscii(String hex) {
         if (hex == null) return "";
         StringBuilder output = new StringBuilder();
@@ -336,7 +342,9 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                 String epcAscii = hexToAscii(epcHex);
                 String rssi = tagInfo.getRssi();
 
-                if (tagsSink != null) tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
+                if (tagsSink != null) tagsSink.success(epcAscii);
+
+                //if (tagsSink != null) tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
 
                 // Nếu cần debug thêm, bạn có thể gửi cả HEX và ASCII:
                 // if (tagsSink != null) tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
@@ -345,6 +353,7 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             } else {
                 result.success(false);
             }
+
         } catch (Exception e) {
             Log.e(TAG, "Lỗi quét RFID: " + e.getMessage());
             result.error("SCAN_ERROR", "Lỗi quét RFID: " + e.getMessage(), null);
@@ -372,13 +381,15 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                             String rssi = tagInfo.getRssi();
                             scanHandler.post(() -> {
                                 if (tagsSink != null) {
-                                    tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
+                                    tagsSink.success(epcAscii);
+
+                                    // tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
                                     // Debug option:
                                     // tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
                                 }
                             });
                         }
-                        Thread.sleep(1000);
+                        Thread.sleep(200);
                     } catch (InterruptedException ie) {
                         Log.w(TAG, "Continuous scan interrupted: " + ie.getMessage());
                         break;
@@ -526,7 +537,7 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                                                     }
                                                 }
                                             }
-                                        }, 1000);
+                                        }, 300);
                                     }
                                 } else {
                                     Log.e(TAG, "❌ Decode FAIL - resultCode: " + resultCode);
