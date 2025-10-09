@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:paralled_data/pages/history_page.dart';
-import 'package:paralled_data/rfid_bluetooth_connect.dart';
+import 'package:paralled_data/pages/rfid_scan_bluetooth_page.dart';
+import 'package:paralled_data/rfid_test_bluetooth_connect.dart';
 import 'package:paralled_data/rfid_test_connect.dart';
 import 'barcode_scan_page.dart';
 import 'rfid_scan_page.dart';
@@ -66,6 +67,26 @@ class HomePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
 
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.bluetooth),
+                  label: const Text('Quét Bluetooth'),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 60),
+                    backgroundColor: Colors.lightBlueAccent,
+                    textStyle: const TextStyle(fontSize: 18),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const RfidTestBluetoothConnect()),
+                          // builder: (_) => const RfidScanBluetoothPage()),
+                    );
+                  },
+                ),
+
+                const SizedBox(height: 20),
+
                 // Nút lịch sử
                 ElevatedButton.icon(
                   icon: const Icon(Icons.history),
@@ -105,21 +126,22 @@ class HomePage extends StatelessWidget {
 
                 const SizedBox(height: 20),
 
-                // ElevatedButton.icon(
-                //   icon: const Icon(Icons.bug_report),
-                //   label: const Text('Test bluetooth'),
-                //   style: ElevatedButton.styleFrom(
-                //     minimumSize: const Size(double.infinity, 60),
-                //     textStyle:
-                //         const TextStyle(fontSize: 18, color: Colors.white),
-                //   ),
-                //   onPressed: () {
-                //     Navigator.push(
-                //       context,
-                //       MaterialPageRoute(builder: (_) => RfidDemoPage()),
-                //     );
-                //   },
-                // ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.bug_report),
+                  label: const Text('Test bluetooth'),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 60),
+                    textStyle:
+                        const TextStyle(fontSize: 18, color: Colors.white),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => RfidTestBluetoothConnect()),
+                    );
+                  },
+                ),
               ],
             ),
           ),

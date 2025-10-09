@@ -208,11 +208,12 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                   child: Column(
                     children: [
                       Container(
+                        height: 60,
                         color: Colors.blue.shade50,
                         padding: const EdgeInsets.all(8.0),
                         width: double.infinity,
-                        child: const Text(
-                          'Dữ liệu đã quét',
+                        child: Text(
+                          'Dữ liệu đã quét (${_localData.length})',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Colors.blue,
@@ -228,11 +229,12 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                   child: Column(
                     children: [
                       Container(
+                        height: 60,
                         color: Colors.green.shade50,
                         padding: const EdgeInsets.all(8.0),
                         width: double.infinity,
-                        child: const Text(
-                          'Dữ liệu đồng bộ',
+                        child: Text(
+                          'Dữ liệu đồng bộ (${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Colors.green,

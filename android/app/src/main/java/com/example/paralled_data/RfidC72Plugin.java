@@ -360,51 +360,109 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         }
     }
 
+    // private void startContinuousScan(MethodChannel.Result result) {
+    //     if (uhfReader == null) {
+    //         result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
+    //         return;
+    //     }
+    //     try {
+    //         if (isScanning) {
+    //             result.success(true);
+    //             return;
+    //         }
+    //         isScanning = true;
+    //         new Thread(() -> {
+    //             while (isScanning) {
+    //                 try {
+    //                     UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
+    //                     if (tagInfo != null) {
+    //                         String epcHex = tagInfo.getEPC();
+    //                         String epcAscii = hexToAscii(epcHex);
+    //                         String rssi = tagInfo.getRssi();
+    //                         scanHandler.post(() -> {
+    //                             if (tagsSink != null) {
+    //                                 tagsSink.success(epcAscii);
+
+    //                                 // tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
+    //                                 // Debug option:
+    //                                 // tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
+    //                             }
+    //                         });
+    //                     }
+    //                     Thread.sleep(100);
+    //                 } catch (InterruptedException ie) {
+    //                     Log.w(TAG, "Continuous scan interrupted: " + ie.getMessage());
+    //                     break;
+    //                 } catch (Exception e) {
+    //                     Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
+    //                 }
+    //             }
+    //         }).start();
+    //         result.success(true);
+    //     } catch (Exception e) {
+    //         isScanning = false;
+    //         Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
+    //         result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
+    //     }
+    // }
+
     private void startContinuousScan(MethodChannel.Result result) {
-        if (uhfReader == null) {
-            result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
+    if (uhfReader == null) {
+        result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
+        return;
+    }
+    try {
+        if (isScanning) {
+            result.success(true);
             return;
         }
-        try {
-            if (isScanning) {
-                result.success(true);
-                return;
-            }
-            isScanning = true;
-            new Thread(() -> {
-                while (isScanning) {
-                    try {
-                        UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
-                        if (tagInfo != null) {
-                            String epcHex = tagInfo.getEPC();
-                            String epcAscii = hexToAscii(epcHex);
-                            String rssi = tagInfo.getRssi();
-                            scanHandler.post(() -> {
-                                if (tagsSink != null) {
-                                    tagsSink.success(epcAscii);
 
-                                    // tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
-                                    // Debug option:
-                                    // tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
-                                }
-                            });
-                        }
-                        Thread.sleep(200);
-                    } catch (InterruptedException ie) {
-                        Log.w(TAG, "Continuous scan interrupted: " + ie.getMessage());
-                        break;
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
+        isScanning = true;
+
+        new Thread(() -> {
+            while (isScanning) {
+                try {
+                    // Bắt đầu đo thời gian (tùy chọn)
+                    long startTime = System.currentTimeMillis();
+
+                    // Gọi đọc 1 tag
+                    UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
+
+                    if (tagInfo != null) {
+                        String epcHex = tagInfo.getEPC();
+                        String epcAscii = hexToAscii(epcHex);
+
+                        scanHandler.post(() -> {
+                            if (tagsSink != null) {
+                                tagsSink.success(epcAscii);
+                            }
+                        });
                     }
+
+                    // Không sleep — đọc liên tục
+                    long endTime = System.currentTimeMillis();
+                    long duration = endTime - startTime;
+
+                    // Optional: nếu cần giãn nhịp theo thời gian đọc thực tế (tự nhiên)
+                    if (duration < 5) {
+                        // rất ngắn, thêm delay nhẹ tránh loop CPU 100%
+                        Thread.yield();
+                    }
+
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
                 }
-            }).start();
-            result.success(true);
-        } catch (Exception e) {
-            isScanning = false;
-            Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
-            result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
-        }
+            }
+        }).start();
+
+        result.success(true);
+    } catch (Exception e) {
+        isScanning = false;
+        Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
+        result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
     }
+}
+
 
     private void stopScan(MethodChannel.Result result) {
         try {

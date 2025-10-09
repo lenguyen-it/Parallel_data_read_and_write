@@ -2,7 +2,7 @@ package com.example.paralled_data
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import com.example.paralled_data.connect_bluetooth.ConnectionBluetoothPlugin
+import com.example.paralled_data.connect_bluetooth.RfidBlePlugin
 
 class MainActivity: FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -12,7 +12,7 @@ class MainActivity: FlutterActivity() {
         flutterEngine.plugins.add(RfidC72Plugin())
 
         // Đăng ký plugun cho bluetooth
-        flutterEngine.plugins.add(ConnectionBluetoothPlugin())
+        flutterEngine.plugins.add(RfidBlePlugin())
 
     }
 }
