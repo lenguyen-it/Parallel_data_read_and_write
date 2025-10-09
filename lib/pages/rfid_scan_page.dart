@@ -1,205 +1,159 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:paralled_data/database/history_database.dart';
-import 'package:paralled_data/plugin/rfid_c72_plugin.dart';
+import 'package:paralled_data/services/rfid_scan_service.dart';
 
 class RfidScanPage extends StatefulWidget {
-  const RfidScanPage({Key? key}) : super(key: key);
+  const RfidScanPage({super.key});
 
   @override
   State<RfidScanPage> createState() => _RfidScanPageState();
 }
 
 class _RfidScanPageState extends State<RfidScanPage> {
-  bool _isConnected = false;
-  bool _isScanning = false;
-  bool _isContinuous = false;
-  String _lastTag = 'Chưa có dữ liệu';
-  List<Map<String, dynamic>> _recent = [];
+  final RfidScanService _scanService = RfidScanService();
+  List<Map<String, dynamic>> _localData = [];
+  StreamSubscription<String>? _subscription;
+  Timer? _autoRefreshTimer;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _attachStream();
-    _connect();
-    _loadRecent();
+    _initSetup();
+  }
+
+  Future<void> _initSetup() async {
+    await _scanService.connect();
+    _scanService.attachTagStream();
+    await _loadLocal();
+
+    _subscription = _scanService.tagStream.listen((_) async {
+      await _loadLocal();
+    });
+
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      await _loadLocal();
+    });
+  }
+
+  Future<void> _loadLocal() async {
+    final data = await HistoryDatabase.instance.getAllScans();
+    // Mã mới nhất ở đầu danh sách
+    setState(() => _localData = data);
   }
 
   @override
   void dispose() {
-    try {
-      // đảm bảo dừng scan trước khi rời
-      // RfidC72Plugin.stopScan;
-      Future.delayed(const Duration(milliseconds: 120), () {
-        RfidC72Plugin.close;
-        RfidC72Plugin.closeScan;
-      });
-    } catch (_) {}
+    _subscription?.cancel();
+    _autoRefreshTimer?.cancel();
+    _scanService.dispose();
     super.dispose();
   }
 
-  void _attachStream() {
-    // Lắng nghe stream tags từ native plugin
+  Future<void> _handleSingleScan() async {
+    setState(() => _isLoading = true);
     try {
-      RfidC72Plugin.tagsStatusStream.receiveBroadcastStream().listen(
-        (event) async {
-          final tag = event?.toString() ?? '';
-          debugPrint('[RFID] event: $tag');
-
-          // update UI
-          setState(() {
-            _lastTag = tag;
-          });
-
-          // lưu vào DB (dùng helper chung)
-          try {
-            await HistoryDatabase.instance.insertScan(tag, status: 'success');
-          } catch (e) {
-            debugPrint('Lỗi lưu RFID vào DB: $e');
-          }
-
-          // refresh recent list
-          _loadRecent();
-        },
-        onError: (err) async {
-          debugPrint('[RFID] stream error: $err');
-          setState(() {
-            _lastTag = 'Lỗi stream: $err';
-          });
-          // optional: lưu lỗi
-          try {
-            await HistoryDatabase.instance.insertScan('RFID_STREAM_ERROR',
-                status: 'failed', error: err.toString());
-            _loadRecent();
-          } catch (_) {}
-        },
-      );
+      await _scanService.startSingleScan();
     } catch (e) {
-      debugPrint('Attach RFID stream failed: $e');
-    }
-  }
-
-  Future<void> _connect() async {
-    setState(() => _isConnected = false);
-    try {
-      final ok = await RfidC72Plugin.connect;
-      debugPrint('RFID connect: $ok');
-      setState(() => _isConnected = ok == true);
-    } catch (e) {
-      debugPrint('RFID connect error: $e');
-      setState(() => _isConnected = false);
-    }
-  }
-
-  Future<void> _scanSingle() async {
-    if (!_isConnected) {
-      _showSnack('Chưa kết nối thiết bị');
-      return;
-    }
-    try {
-      setState(() => _isScanning = true);
-      await RfidC72Plugin.startSingle;
-      // kết quả sẽ đến qua stream; không cần chờ trả về
-    } catch (e) {
-      debugPrint('Start single error: $e');
-      _showSnack('Lỗi khi bắt đầu quét: $e');
-      await HistoryDatabase.instance.insertScan('RFID_SINGLE_ERROR',
-          status: 'failed', error: e.toString());
-      _loadRecent();
+      debugPrint('Single scan error: $e');
     } finally {
-      setState(() => _isScanning = false);
+      await _loadLocal();
+      setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _startContinuous() async {
-    if (!_isConnected) {
-      _showSnack('Chưa kết nối thiết bị');
-      return;
-    }
+  Future<void> _handleContinuousScan() async {
     try {
-      setState(() {
-        _isContinuous = true;
-        _isScanning = true;
-      });
-      await RfidC72Plugin.startContinuous;
-      _showSnack('Bắt đầu quét liên tục');
+      await _scanService.startContinuousScan();
     } catch (e) {
-      debugPrint('Start continuous error: $e');
-      _showSnack('Lỗi khi bắt đầu quét liên tục: $e');
-      await HistoryDatabase.instance
-          .insertScan('RFID_CONT_ERROR', status: 'failed', error: e.toString());
-      _loadRecent();
-      setState(() {
-        _isContinuous = false;
-        _isScanning = false;
-      });
+      debugPrint('Continuous scan error: $e');
     }
   }
 
-  Future<void> _stopScan() async {
-    try {
-      await RfidC72Plugin.stopScan;
-      setState(() {
-        _isContinuous = false;
-        _isScanning = false;
-        _lastTag = 'Đã dừng quét';
-      });
-      _showSnack('Đã dừng quét');
-    } catch (e) {
-      debugPrint('Stop scan error: $e');
-      _showSnack('Lỗi khi dừng quét: $e');
+  Future<void> _handleStopScan() async {
+    await _scanService.stopScan();
+  }
+
+  /// 📱 Dữ liệu đã quét
+  Widget _buildScannedList() {
+    if (_localData.isEmpty) {
+      return const Center(child: Text('Chưa có dữ liệu'));
     }
-  }
 
-  Future<void> _loadRecent() async {
-    final rows = await HistoryDatabase.instance.getAllScans();
-    setState(() => _recent = rows.cast<Map<String, dynamic>>());
-  }
-
-  Future<void> _clearAll() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Xoá toàn bộ lịch sử?'),
-        content: const Text(
-            'Bạn có chắc muốn xoá toàn bộ lịch sử quét trên thiết bị?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Huỷ')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Xoá', style: TextStyle(color: Colors.red))),
-        ],
-      ),
+    return ListView.builder(
+      itemCount: _localData.length,
+      itemBuilder: (context, i) {
+        final item = _localData[i];
+        return Container(
+          height: 70,
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: Colors.black12)),
+          ),
+          child: ListTile(
+            title: Text(
+              item['barcode'] ?? '---',
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        );
+      },
     );
-
-    if (ok == true) {
-      await HistoryDatabase.instance.clearHistory();
-      await _loadRecent();
-      _showSnack('Đã xoá lịch sử');
-    }
   }
 
-  void _showSnack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  Widget _buildStatusChip(String status) {
-    Color c;
-    IconData ic;
-    if (status == 'success') {
-      c = Colors.green.shade100;
-      ic = Icons.check_circle;
-    } else if (status == 'failed') {
-      c = Colors.red.shade100;
-      ic = Icons.error;
-    } else {
-      c = Colors.orange.shade100;
-      ic = Icons.sync;
+  /// ☁️ Dữ liệu đồng bộ (hiển thị trạng thái)
+  Widget _buildSyncedList() {
+    if (_localData.isEmpty) {
+      return const Center(child: Text('Không có dữ liệu đồng bộ'));
     }
-    return Chip(
-      avatar: Icon(ic, size: 18, color: Colors.black54),
-      label: Text(status),
-      backgroundColor: c,
+
+    final statusMap = {
+      'pending': 'Đang chờ',
+      'synced': 'Thành công',
+      'failed': 'Thất bại',
+    };
+
+    return ListView.builder(
+      itemCount: _localData.length,
+      itemBuilder: (context, i) {
+        final item = _localData[i];
+        final code = item['barcode'] ?? '---';
+        final status = item['status'] ?? 'pending';
+
+        final statusText = statusMap[status] ?? status;
+
+        Color bgColor;
+        switch (status) {
+          case 'synced':
+            bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
+            break;
+          case 'failed':
+            bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
+            break;
+          default:
+            bgColor = const Color(0xFFFFF8E1); // cam nhạt
+        }
+
+        return Container(
+          height: 70,
+          color: bgColor,
+          child: ListTile(
+            title: Text(
+              code,
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: Text(
+              'Trạng thái: $statusText',
+              style: TextStyle(
+                fontSize: 13,
+                color: status == 'synced'
+                    ? Colors.green
+                    : (status == 'failed' ? Colors.red : Colors.orange),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -207,117 +161,90 @@ class _RfidScanPageState extends State<RfidScanPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Quét RFID (C72)'),
-        backgroundColor: _isConnected ? Colors.green : Colors.redAccent,
-        actions: [
-          IconButton(onPressed: _loadRecent, icon: const Icon(Icons.refresh)),
-          IconButton(
-              onPressed: _clearAll, icon: const Icon(Icons.delete_forever)),
-        ],
+        title: const Text('Đồng bộ dữ liệu song song'),
+        backgroundColor: Colors.blue.shade700,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          children: [
-            Card(
-              elevation: 3,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              child: ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                leading: CircleAvatar(
-                    backgroundColor: Colors.blue.shade50,
-                    child: const Icon(Icons.nfc, color: Colors.blue)),
-                title: const Text('Tag mới nhất',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(_lastTag),
-                trailing: _buildStatusChip('success'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _connect,
-                    icon: Icon(_isConnected ? Icons.check_circle : Icons.link),
-                    label: Text(_isConnected ? 'Đã kết nối' : 'Kết nối'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        backgroundColor: _isConnected ? Colors.green : null),
-                  ),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _handleSingleScan,
+                  child: const Text('Quét 1 lần'),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _scanSingle,
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Quét 1 lần'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48)),
+                ElevatedButton(
+                  onPressed: _handleContinuousScan,
+                  child: const Text('Quét liên tục'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
                   ),
+                  onPressed: _handleStopScan,
+                  child: const Text('Dừng'),
+                ),
+                ElevatedButton(
+                  onPressed: _loadLocal,
+                  child: const Text('Tải lại'),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Row(
+          ),
+
+          const Divider(height: 1),
+
+          // ✅ Hai cột: dữ liệu quét & đồng bộ
+          Expanded(
+            child: Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: !_isScanning ? _startContinuous : null,
-                    icon: const Icon(Icons.sync),
-                    label: const Text('Quét liên tục'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        backgroundColor: Colors.lightBlueAccent),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isContinuous ? _stopScan : null,
-                    icon: const Icon(Icons.stop),
-                    label: const Text('Dừng'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                        backgroundColor: Colors.redAccent),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: _loadRecent,
-                child: _recent.isEmpty
-                    ? ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        children: const [
-                          SizedBox(height: 80),
-                          Center(child: Text('Chưa có dữ liệu quét'))
-                        ],
-                      )
-                    : ListView.separated(
-                        itemCount: _recent.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, idx) {
-                          final r = _recent[idx];
-                          final ts = DateTime.fromMillisecondsSinceEpoch(
-                              r['timestamp_device'] ?? 0);
-                          return ListTile(
-                            leading: const Icon(Icons.nfc, color: Colors.blue),
-                            title: Text(r['barcode'] ?? ''),
-                            subtitle: Text('Quét lúc: ${ts.toString()}'),
-                            trailing:
-                                _buildStatusChip(r['status'] ?? 'pending'),
-                          );
-                        },
+                  child: Column(
+                    children: [
+                      Container(
+                        color: Colors.blue.shade50,
+                        padding: const EdgeInsets.all(8.0),
+                        width: double.infinity,
+                        child: const Text(
+                          'Dữ liệu đã quét',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
                       ),
-              ),
+                      Expanded(child: _buildScannedList()),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: Column(
+                    children: [
+                      Container(
+                        color: Colors.green.shade50,
+                        padding: const EdgeInsets.all(8.0),
+                        width: double.infinity,
+                        child: const Text(
+                          'Dữ liệu đồng bộ',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ),
+                      Expanded(child: _buildSyncedList()),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

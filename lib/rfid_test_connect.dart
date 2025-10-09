@@ -3,7 +3,7 @@ import 'plugin/rfid_c72_plugin.dart';
 import 'package:flutter_barcode_scanner_plus/flutter_barcode_scanner_plus.dart';
 
 class RfidTestConnect extends StatefulWidget {
-  const RfidTestConnect({Key? key}) : super(key: key);
+  const RfidTestConnect({super.key});
 
   @override
   State<RfidTestConnect> createState() => _RfidTestConnectState();

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:paralled_data/database/history_database.dart';
 
 class HistoryPage extends StatefulWidget {
-  const HistoryPage({Key? key}) : super(key: key);
+  const HistoryPage({super.key});
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
@@ -48,13 +48,16 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Widget _statusBadge(String status) {
-    if (status == 'success')
+    if (status == 'success') {
       return Chip(
           backgroundColor: Colors.green.shade100, label: const Text('success'));
-    if (status == 'failed')
+    }
+    if (status == 'failed') {
       return Chip(
           backgroundColor: Colors.red.shade100, label: const Text('failed'));
-    return Chip(backgroundColor: Colors.orange.shade100, label: Text(status));
+    }
+    return Chip(
+        backgroundColor: Colors.lightBlue.shade100, label: Text(status));
   }
 
   @override
