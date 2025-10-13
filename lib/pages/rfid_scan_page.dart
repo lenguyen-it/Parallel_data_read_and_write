@@ -272,6 +272,8 @@ class _RfidScanPageState extends State<RfidScanPage> {
   StreamSubscription<Map<String, dynamic>>? _subscription;
   Timer? _autoRefreshTimer;
   bool _isLoading = false;
+
+  //Hiển thị tag mới nhất
   Map<String, dynamic>? _lastTagData;
 
   @override
