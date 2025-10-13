@@ -330,6 +330,33 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         }
     }
 
+    private void sendRfidData(UHFTAGInfo tagInfo) {
+        if (tagsSink != null && tagInfo != null) {
+            Map<String, Object> dataMap = new HashMap<>();
+
+            String epcHex = tagInfo.getEPC() != null ? tagInfo.getEPC() : "";
+            String tidHex = tagInfo.getTid() != null ? tagInfo.getTid() : "";
+            String userHex = tagInfo.getUser() != null ? tagInfo.getUser() : "";
+
+            String epcAscii = hexToAscii(epcHex);
+            String tidAscii = hexToAscii(tidHex);
+            String userAscii = hexToAscii(userHex);
+
+            dataMap.put("epc_hex", epcHex);
+            dataMap.put("epc_ascii", epcAscii);
+            dataMap.put("tid_hex", tidHex);
+            dataMap.put("tid_ascii", tidAscii);
+            dataMap.put("user_hex", userHex);
+            dataMap.put("user_ascii", userAscii);
+            dataMap.put("rssi", tagInfo.getRssi() != null ? tagInfo.getRssi() : "");
+            dataMap.put("count", tagInfo.getCount());
+
+            scanHandler.post(() -> tagsSink.success(dataMap));
+
+            Log.d(TAG, "RFID Data Sent: EPC=" + epcAscii + " (HEX: " + epcHex + ")");
+        }
+    }
+
     private void startSingleScan(MethodChannel.Result result) {
         if (uhfReader == null) {
             result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
@@ -337,74 +364,36 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         }
         try {
             UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
+            // if (tagInfo != null) {
+            //     String epcHex = tagInfo.getEPC();
+            //     String epcAscii = hexToAscii(epcHex);
+            //     String rssi = tagInfo.getRssi();
+
+            //     if (tagsSink != null) tagsSink.success(epcAscii);
+
+            //     //if (tagsSink != null) tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
+
+            //     // Nếu cần debug thêm, bạn có thể gửi cả HEX và ASCII:
+            //     // if (tagsSink != null) tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
+
+            //     result.success(true);
+            // } else {
+            //     result.success(false);
+            // }
+
             if (tagInfo != null) {
-                String epcHex = tagInfo.getEPC();
-                String epcAscii = hexToAscii(epcHex);
-                String rssi = tagInfo.getRssi();
-
-                if (tagsSink != null) tagsSink.success(epcAscii);
-
-                //if (tagsSink != null) tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
-
-                // Nếu cần debug thêm, bạn có thể gửi cả HEX và ASCII:
-                // if (tagsSink != null) tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
-
+                sendRfidData(tagInfo);
                 result.success(true);
             } else {
                 result.success(false);
             }
+
 
         } catch (Exception e) {
             Log.e(TAG, "Lỗi quét RFID: " + e.getMessage());
             result.error("SCAN_ERROR", "Lỗi quét RFID: " + e.getMessage(), null);
         }
     }
-
-    // private void startContinuousScan(MethodChannel.Result result) {
-    //     if (uhfReader == null) {
-    //         result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
-    //         return;
-    //     }
-    //     try {
-    //         if (isScanning) {
-    //             result.success(true);
-    //             return;
-    //         }
-    //         isScanning = true;
-    //         new Thread(() -> {
-    //             while (isScanning) {
-    //                 try {
-    //                     UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
-    //                     if (tagInfo != null) {
-    //                         String epcHex = tagInfo.getEPC();
-    //                         String epcAscii = hexToAscii(epcHex);
-    //                         String rssi = tagInfo.getRssi();
-    //                         scanHandler.post(() -> {
-    //                             if (tagsSink != null) {
-    //                                 tagsSink.success(epcAscii);
-
-    //                                 // tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
-    //                                 // Debug option:
-    //                                 // tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
-    //                             }
-    //                         });
-    //                     }
-    //                     Thread.sleep(100);
-    //                 } catch (InterruptedException ie) {
-    //                     Log.w(TAG, "Continuous scan interrupted: " + ie.getMessage());
-    //                     break;
-    //                 } catch (Exception e) {
-    //                     Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
-    //                 }
-    //             }
-    //         }).start();
-    //         result.success(true);
-    //     } catch (Exception e) {
-    //         isScanning = false;
-    //         Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
-    //         result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
-    //     }
-    // }
 
     private void startContinuousScan(MethodChannel.Result result) {
     if (uhfReader == null) {
@@ -428,16 +417,21 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                     // Gọi đọc 1 tag
                     UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
 
-                    if (tagInfo != null) {
-                        String epcHex = tagInfo.getEPC();
-                        String epcAscii = hexToAscii(epcHex);
+                    // if (tagInfo != null) {
+                    //     String epcHex = tagInfo.getEPC();
+                    //     String epcAscii = hexToAscii(epcHex);
 
-                        scanHandler.post(() -> {
-                            if (tagsSink != null) {
-                                tagsSink.success(epcAscii);
-                            }
-                        });
-                    }
+                    //     scanHandler.post(() -> {
+                    //         if (tagsSink != null) {
+                    //             tagsSink.success(epcAscii);
+                    //         }
+                    //     });
+                    // }
+
+                    if (tagInfo != null) {
+                        sendRfidData(tagInfo);
+                    }   
+
 
                     // Không sleep — đọc liên tục
                     long endTime = System.currentTimeMillis();
