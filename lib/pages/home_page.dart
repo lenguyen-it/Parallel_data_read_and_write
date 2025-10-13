@@ -79,8 +79,7 @@ class HomePage extends StatelessWidget {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                          builder: (_) => const RfidTestBluetoothConnect()),
-                          // builder: (_) => const RfidScanBluetoothPage()),
+                          builder: (_) => const RfidScanBluetoothPage()),
                     );
                   },
                 ),
@@ -127,7 +126,7 @@ class HomePage extends StatelessWidget {
                 const SizedBox(height: 20),
 
                 ElevatedButton.icon(
-                  icon: const Icon(Icons.bug_report),
+                  icon: const Icon(Icons.settings_bluetooth),
                   label: const Text('Test bluetooth'),
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 60),
