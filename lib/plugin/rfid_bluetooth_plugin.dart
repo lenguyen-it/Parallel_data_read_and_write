@@ -5,12 +5,10 @@ import 'dart:async';
 class RfidBlePlugin {
   static const MethodChannel _channel = MethodChannel('rfid_ble_channel');
 
-  // Channel riêng cho scan devices
   static const EventChannel _scanDevicesResultChannel = EventChannel(
     'ble_rfid_scan_result',
   );
 
-  // Channel riêng cho connection status
   static const EventChannel _connectionChannel = EventChannel(
     'ble_rfid_connection',
   );
@@ -18,9 +16,53 @@ class RfidBlePlugin {
   static const EventChannel _rfidDataChannel = EventChannel('rfid_ble_data');
   static const EventChannel _configStream = EventChannel("ble_rfid_config");
 
+  static const EventChannel _bluetoothStateChannel =
+      EventChannel('bluetooth_state_channel');
+
   static Future<String?> get platformVersion async {
     final String? version = await _channel.invokeMethod('getPlatformVersion');
     return version;
+  }
+
+  // Stream lắng nghe thay đổi Bluetooth state
+  static Stream<bool> get bluetoothStateStream {
+    return _bluetoothStateChannel.receiveBroadcastStream().map((event) {
+      try {
+        return event as bool;
+      } catch (e) {
+        if (kDebugMode) {
+          print("❌ Error parsing Bluetooth state: $e");
+        }
+        return false;
+      }
+    });
+  }
+
+  /// Kiểm tra Bluetooth đã bật chưa
+  static Future<bool> checkBluetoothEnabled() async {
+    try {
+      final bool isEnabled =
+          await _channel.invokeMethod('checkBluetoothEnabled');
+      return isEnabled;
+    } catch (e) {
+      if (kDebugMode) {
+        print("❌ Error checking Bluetooth: $e");
+      }
+      return false;
+    }
+  }
+
+  /// Yêu cầu bật Bluetooth
+  static Future<bool> enableBluetooth() async {
+    try {
+      await _channel.invokeMethod('enableBluetooth');
+      return true;
+    } catch (e) {
+      if (kDebugMode) {
+        print("❌ Error enabling Bluetooth: $e");
+      }
+      return false;
+    }
   }
 
   /// Stream danh sách thiết bị BLE scan được
@@ -81,6 +123,7 @@ class RfidBlePlugin {
       if (kDebugMode) {
         print("❌ Error start scan: $e");
       }
+      rethrow;
     }
   }
 
@@ -160,6 +203,20 @@ class RfidBlePlugin {
       if (kDebugMode) {
         print("❌ Error getting battery level: $e");
       }
+    }
+  }
+
+  /// Lấy trạng thái kết nối hiện tại
+  static Future<bool> getConnectionStatus() async {
+    try {
+      final bool isConnected =
+          await _channel.invokeMethod('getConnectionStatus');
+      return isConnected;
+    } catch (e) {
+      if (kDebugMode) {
+        print("❌ Error getting connection status: $e");
+      }
+      return false;
     }
   }
 }
