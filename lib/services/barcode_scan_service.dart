@@ -158,7 +158,8 @@ class BarcodeScanService {
         await HistoryDatabase.instance.updateStatusById(idLocal, 'synced');
         _retryCounter.remove(idLocal);
       } else {
-        _handleRetryFail(idLocal, barcode, 'Server error ${response.statusCode}');
+        _handleRetryFail(
+            idLocal, barcode, 'Server error ${response.statusCode}');
       }
     } catch (e) {
       _handleRetryFail(idLocal, barcode, e.toString());
