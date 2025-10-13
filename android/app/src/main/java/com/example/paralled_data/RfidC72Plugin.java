@@ -458,10 +458,31 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
 }
 
 
+    // private void stopScan(MethodChannel.Result result) {
+    //     try {
+    //         isScanning = false;
+    //         if (uhfReader != null) uhfReader.stopInventory();
+    //         result.success(true);
+    //     } catch (Exception e) {
+    //         Log.e(TAG, "Lỗi dừng quét: " + e.getMessage());
+    //         result.error("STOP_ERROR", "Lỗi dừng quét: " + e.getMessage(), null);
+    //     }
+    // }
+
     private void stopScan(MethodChannel.Result result) {
         try {
             isScanning = false;
-            if (uhfReader != null) uhfReader.stopInventory();
+            if (uhfReader != null) {
+                new Thread(() -> {
+                    try {
+                        Log.d(TAG, "🛑 Gửi lệnh dừng quét UHF...");
+                        uhfReader.stopInventory();
+                        Log.d(TAG, "✅ Dừng quét thành công");
+                    } catch (Exception e) {
+                        Log.e(TAG, "❌ Lỗi trong stopInventory thread: " + e.getMessage());
+                    }
+                }).start();
+            }
             result.success(true);
         } catch (Exception e) {
             Log.e(TAG, "Lỗi dừng quét: " + e.getMessage());
