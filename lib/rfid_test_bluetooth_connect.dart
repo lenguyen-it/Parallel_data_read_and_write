@@ -23,7 +23,11 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   bool _isScanning = false;
   bool _isReading = false;
 
+  bool _isCheckingConnection = true;
+
   String _connectedDeviceName = '';
+  String _lastConnectedDeviceName = '';
+
   String _lastConnectedDeviceAddress = '';
   int _batteryLevel = 0;
 
@@ -49,11 +53,51 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   @override
   void initState() {
     super.initState();
-    _initializeListeners();
     _requestPermissions();
     _checkBluetoothStatus();
+    _checkExistingConnection();
+    _initializeListeners();
     _startSyncWorker();
     _startAutoRefresh();
+  }
+
+  Future<void> _checkExistingConnection() async {
+    try {
+      final isConnected = await RfidBlePlugin.getConnectionStatus();
+
+      if (mounted) {
+        setState(() {
+          _isConnected = isConnected;
+          _showRfidSection = isConnected;
+          _isCheckingConnection = false;
+        });
+
+        if (isConnected) {
+          // Nếu đã kết nối, load dữ liệu và lấy battery
+          await _loadLocal();
+          await RfidBlePlugin.getBatteryLevel();
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Đã khôi phục kết nối thiết bị'),
+                duration: Duration(seconds: 2),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Lỗi kiểm tra kết nối: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingConnection = false;
+          _showRfidSection = false;
+          _isConnected = false;
+        });
+      }
+    }
   }
 
   // =================== Bluetooth ===================
@@ -181,6 +225,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
       if (result.isNotEmpty) {
         setState(() {
           _connectedDeviceName = name;
+          _lastConnectedDeviceName = name;
           _lastConnectedDeviceAddress = address;
           _isConnected = true;
           _showRfidSection = true;
@@ -293,6 +338,24 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   // =================== UI ===================
   @override
   Widget build(BuildContext context) {
+    if (_isCheckingConnection) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('RFID Bluetooth - Đồng bộ'),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Đang kiểm tra kết nối...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('RFID Bluetooth - Đồng bộ'),
@@ -365,6 +428,11 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
                   Text(
                     _connectedDeviceName,
                     style: TextStyle(color: Colors.grey.shade700, fontSize: 14),
+                  )
+                else if (_lastConnectedDeviceName.isNotEmpty)
+                  Text(
+                    _lastConnectedDeviceName,
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 14),
                   ),
               ],
             ),
@@ -384,7 +452,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
             ? _disconnect
             : (_lastConnectedDeviceAddress.isNotEmpty
                 ? () => _connectToDevice(
-                    _connectedDeviceName, _lastConnectedDeviceAddress)
+                    _lastConnectedDeviceName, _lastConnectedDeviceAddress)
                 : null),
         icon: Icon(_isConnected ? Icons.close : Icons.bluetooth),
         label: Text(_isConnected ? 'Ngắt' : 'Kết nối lại'),

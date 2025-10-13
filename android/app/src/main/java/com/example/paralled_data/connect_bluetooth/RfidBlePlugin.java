@@ -77,6 +77,8 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
     private EventChannel.EventSink bluetoothStateSink;
 
     private final Set<String> seenDevices = new HashSet<>();
+    private boolean lastConnectionState = false;
+
 
     
     private void acquireWakeLock() {
@@ -352,75 +354,6 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
         }
     }
 
-    // private void startScan(Result result) {
-    //     if (activity == null) {
-    //         result.error("NO_ACTIVITY", "Activity not available", null);
-    //         return;
-    //     }
-
-    //     // Kiểm tra Bluetooth trước khi scan
-    //     BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-    //     if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-    //         result.error("BLUETOOTH_OFF", "Bluetooth is not enabled", null);
-    //         return;
-    //     }
-
-    //     if (uhfble == null) {
-    //         initializeUHFBLE();
-    //     }
-
-    //     if (isScanning) {
-    //         result.success("Already scanning");
-    //         return;
-    //     }
-
-    //     Log.d(TAG, "Starting BLE scan...");
-    //     isScanning = true;
-
-    //     scanHandler.postDelayed(() -> {
-    //         if (isScanning) {
-    //             stopScan(new Result() {
-    //                 @Override
-    //                 public void success(Object o) {
-    //                     Log.d(TAG, "Auto-stopped scan after timeout");
-    //                 }
-    //                 @Override
-    //                 public void error(String s, String s1, Object o) {}
-    //                 @Override
-    //                 public void notImplemented() {}
-    //             });
-    //         }
-    //     }, SCAN_PERIOD);
-
-    //     uhfble.startScanBTDevices(new ScanBTCallback() {
-    //         @Override
-    //         public void getDevices(BluetoothDevice bluetoothDevice, int rssi, byte[] bytes) {
-    //             if (bluetoothDevice == null) return;    
-                
-    //             String name = bluetoothDevice.getName();
-    //             String address = bluetoothDevice.getAddress();
-                
-    //             if (name == null || name.isEmpty()) {
-    //                 return;
-    //             }
-
-    //             Log.d(TAG, "Found device: " + name + " (" + address + ") RSSI: " + rssi);
-
-    //             Map<String, String> deviceMap = new HashMap<>();
-    //             deviceMap.put("name", name);
-    //             deviceMap.put("address", address);
-                
-    //             if (scanEventSink != null) {
-    //                 mainHandler.post(() -> scanEventSink.success(deviceMap));
-    //             } else {
-    //                 Log.w(TAG, "scanEventSink is null, cannot send device data");
-    //             }
-    //         }
-    //     });
-
-    //     result.success(null);
-    // }
-
     private void startScan(Result result) {
         if (activity == null) {
             result.error("NO_ACTIVITY", "Activity not available", null);
@@ -503,6 +436,66 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
         result.success(null);
     }
 
+    // private void connectToDevice(String macAddress, Result result) {
+    //     if (uhfble == null) {
+    //         initializeUHFBLE();
+    //     }
+
+    //     if (macAddress == null || macAddress.isEmpty()) {
+    //         result.error("INVALID_MAC", "MAC address is required", null);
+    //         return;
+    //     }
+
+    //     Log.d(TAG, "Connecting to: " + macAddress);
+
+    //     final boolean[] resultSubmitted = {false};
+
+    //     uhfble.connect(macAddress, new ConnectionStatusCallback<Object>() {
+    //         @Override
+    //         public void getStatus(ConnectionStatus connectionStatus, Object device) {
+    //             BluetoothDevice btDevice = (BluetoothDevice) device;
+                
+    //             mainHandler.post(() -> {
+    //                 if (connectionStatus == ConnectionStatus.CONNECTED) {
+    //                     acquireWakeLock();
+    //                     Log.d(TAG, "Connected to: " + btDevice.getName());
+                        
+    //                     Map<String, Object> statusMap = new HashMap<>();
+    //                     statusMap.put("connection", true);
+    //                     if (connectionEventSink != null) {
+    //                         connectionEventSink.success(statusMap);
+    //                     }
+                        
+    //                     initRFID();
+                        
+    //                     if (!resultSubmitted[0]) {
+    //                         resultSubmitted[0] = true;
+    //                         result.success("Connected to " + btDevice.getName());
+    //                     }
+                        
+    //                 } else if (connectionStatus == ConnectionStatus.DISCONNECTED) {
+    //                     releaseWakeLock();  
+    //                     Log.d(TAG, "Disconnected from: " + btDevice.getName());
+                        
+    //                     Map<String, Object> statusMap = new HashMap<>();
+    //                     statusMap.put("connection", false);
+    //                     if (connectionEventSink != null) {
+    //                         connectionEventSink.success(statusMap);
+    //                     }
+                        
+    //                     if (!resultSubmitted[0]) {
+    //                         resultSubmitted[0] = true;
+    //                         result.error("DISCONNECTED", "Failed to connect", null);
+    //                     }
+                        
+    //                 } else if (connectionStatus == ConnectionStatus.CONNECTING) {
+    //                     Log.d(TAG, "Connecting to: " + btDevice.getName());
+    //                 }
+    //             });
+    //         }
+    //     });
+    // }
+
     private void connectToDevice(String macAddress, Result result) {
         if (uhfble == null) {
             initializeUHFBLE();
@@ -527,10 +520,14 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
                         acquireWakeLock();
                         Log.d(TAG, "Connected to: " + btDevice.getName());
                         
-                        Map<String, Object> statusMap = new HashMap<>();
-                        statusMap.put("connection", true);
-                        if (connectionEventSink != null) {
-                            connectionEventSink.success(statusMap);
+                        // CHỈ gửi event nếu trạng thái thay đổi
+                        if (!lastConnectionState) {
+                            lastConnectionState = true;
+                            Map<String, Object> statusMap = new HashMap<>();
+                            statusMap.put("connection", true);
+                            if (connectionEventSink != null) {
+                                connectionEventSink.success(statusMap);
+                            }
                         }
                         
                         initRFID();
@@ -544,10 +541,14 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
                         releaseWakeLock();  
                         Log.d(TAG, "Disconnected from: " + btDevice.getName());
                         
-                        Map<String, Object> statusMap = new HashMap<>();
-                        statusMap.put("connection", false);
-                        if (connectionEventSink != null) {
-                            connectionEventSink.success(statusMap);
+                        // CHỈ gửi event nếu trạng thái thay đổi
+                        if (lastConnectionState) {
+                            lastConnectionState = false;
+                            Map<String, Object> statusMap = new HashMap<>();
+                            statusMap.put("connection", false);
+                            if (connectionEventSink != null) {
+                                connectionEventSink.success(statusMap);
+                            }
                         }
                         
                         if (!resultSubmitted[0]) {
@@ -563,14 +564,30 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
         });
     }
 
+    // private void disconnectDevice(Result result) {
+    //     if (uhfble != null) {
+    //         uhfble.disconnect();
+            
+    //         Map<String, Object> statusMap = new HashMap<>();
+    //         statusMap.put("connection", false);
+    //         if (connectionEventSink != null) {
+    //             mainHandler.post(() -> connectionEventSink.success(statusMap));
+    //         }
+    //     }
+    //     result.success(null);
+    // }
     private void disconnectDevice(Result result) {
         if (uhfble != null) {
             uhfble.disconnect();
             
-            Map<String, Object> statusMap = new HashMap<>();
-            statusMap.put("connection", false);
-            if (connectionEventSink != null) {
-                mainHandler.post(() -> connectionEventSink.success(statusMap));
+            // CHỈ gửi event nếu trạng thái thay đổi
+            if (lastConnectionState) {
+                lastConnectionState = false;
+                Map<String, Object> statusMap = new HashMap<>();
+                statusMap.put("connection", false);
+                if (connectionEventSink != null) {
+                    mainHandler.post(() -> connectionEventSink.success(statusMap));
+                }
             }
         }
         result.success(null);
