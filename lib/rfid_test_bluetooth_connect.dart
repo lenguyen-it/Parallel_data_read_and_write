@@ -1,6 +1,10 @@
+// ignore_for_file: unused_field
+
 import 'dart:async';
 import 'dart:convert';
 
+// ignore: unnecessary_import
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
@@ -22,12 +26,10 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   bool _isBluetoothEnabled = false;
   bool _isScanning = false;
   bool _isReading = false;
-
   bool _isCheckingConnection = true;
 
   String _connectedDeviceName = '';
   String _lastConnectedDeviceName = '';
-
   String _lastConnectedDeviceAddress = '';
   int _batteryLevel = 0;
 
@@ -45,10 +47,54 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
 
   Timer? _syncTimer;
   Timer? _autoRefreshTimer;
+
+  // =================== BATCH CONFIG (giống rfid_scan_service) ===================
+  static const int batchSize = 25;
+  static const Duration batchInterval = Duration(milliseconds: 300);
+  final List<Map<String, dynamic>> _pendingBatch = [];
+  Timer? _batchTimer;
+  bool _isFlushingBatch = false;
+
+  // =================== CONCURRENT REQUEST ===================
+  final Set<String> _sendingIds = {};
+  final List<_QueuedRequest> _requestQueue = [];
+  int _activeRequests = 0;
+  static const int maxConcurrentRequests = 3;
+
+  // =================== UI THROTTLING ===================
+  Timer? _uiUpdateTimer;
+  bool _hasPendingUIUpdate = false;
+
   final Map<String, int> _retryCounter = {};
   bool _isSyncing = false;
 
   static const String serverUrl = 'http://192.168.15.194:5000/api/scans';
+  static const int maxRetryAttempts = 3;
+
+  //==================================================================
+  final List<DateTime> _scanTimestamps = [];
+
+  // Lưu timestamp của các lần đồng bộ trong 1 giây
+  final List<DateTime> _syncTimestamps = [];
+
+  int get _scansInLastSecond {
+    final now = DateTime.now();
+    final oneSecondAgo = now.subtract(const Duration(seconds: 1));
+    _scanTimestamps.removeWhere((t) => t.isBefore(oneSecondAgo));
+    return _scanTimestamps.length;
+  }
+
+  int get _syncsInLastSecond {
+    final now = DateTime.now();
+    final oneSecondAgo = now.subtract(const Duration(seconds: 1));
+    _syncTimestamps.removeWhere((t) => t.isBefore(oneSecondAgo));
+    return _syncTimestamps.length;
+  }
+
+  //Đếm số
+  int totalCount = 0;
+  int uniqueCount = 0;
+  final Set<String> uniqueEpcs = {};
 
   @override
   void initState() {
@@ -73,7 +119,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         });
 
         if (isConnected) {
-          // Nếu đã kết nối, load dữ liệu và lấy battery
           await _loadLocal();
           await RfidBlePlugin.getBatteryLevel();
 
@@ -153,7 +198,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           _connectedDeviceName = '';
           _rfidTags.clear();
           _batteryLevel = 0;
-          _showRfidSection = true; // vẫn hiển thị section RFID
+          _showRfidSection = true;
         }
       });
     });
@@ -161,22 +206,22 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     _rfidSubscription = RfidBlePlugin.rfidStream.listen(
       (data) async {
         final epc = (data['epc_ascii']?.toString().trim() ?? '');
-        if (epc.isEmpty) return;
-        if (!mounted) return;
+        if (epc.isEmpty || !mounted) return;
 
-        setState(() {
-          int idx = _rfidTags.indexWhere((t) => t['epc_ascii'] == epc);
-          if (idx >= 0) {
-            _rfidTags[idx] = data;
-          } else {
-            _rfidTags.insert(0, data);
-          }
-        });
+        final scanDurationMs = (data['scan_duration_ms'] is int)
+            ? (data['scan_duration_ms'] as int).toDouble()
+            : (data['scan_duration_ms'] as double?) ?? 0.0;
 
-        final idLocal =
-            await HistoryDatabase.instance.insertScan(epc, status: 'pending');
-        _sendToServer(epc, idLocal);
-        await _loadLocal();
+        totalCount++;
+        if (uniqueEpcs.add(epc)) {
+          uniqueCount++;
+        }
+
+        debugPrint('Tổng: $totalCount | Duy nhất: $uniqueCount');
+
+        _scheduleUIUpdate(data);
+
+        _addToBatch(data, scanDurationMs);
       },
     );
 
@@ -187,6 +232,90 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         });
       }
     });
+  }
+
+  // =================== UI UPDATE với THROTTLE (giống rfid_scan_service) ===================
+  void _scheduleUIUpdate(Map<String, dynamic> data) {
+    if (_hasPendingUIUpdate) return;
+
+    _hasPendingUIUpdate = true;
+    _uiUpdateTimer?.cancel();
+
+    _uiUpdateTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+
+      final epc = data['epc_ascii']?.toString().trim() ?? '';
+
+      setState(() {
+        int idx = _rfidTags.indexWhere((t) => t['epc_ascii'] == epc);
+        if (idx >= 0) {
+          _rfidTags[idx] = data;
+        } else {
+          _rfidTags.insert(0, data);
+        }
+      });
+
+      _hasPendingUIUpdate = false;
+    });
+  }
+
+  // =================== BATCH BUFFER (giống rfid_scan_service) ===================
+  void _addToBatch(Map<String, dynamic> data, double scanDurationMs) {
+    _pendingBatch.add({
+      'barcode': data['epc_ascii'] ?? '',
+      'scan_duration_ms': scanDurationMs,
+      'epc_hex': data['epc_hex'],
+      'tid_hex': data['tid_hex'],
+      'user_hex': data['user_hex'],
+      'rssi': data['rssi'],
+      'count': data['count'],
+    });
+
+    if (_pendingBatch.length >= batchSize) {
+      unawaited(_flushBatch());
+      return;
+    }
+
+    _batchTimer?.cancel();
+    _batchTimer = Timer(batchInterval, () => _flushBatch());
+  }
+
+  // =================== GOM BATCH & FLUSH (giống rfid_scan_service) ===================
+  Future<void> _flushBatch({bool force = false}) async {
+    if (!force && (_isFlushingBatch || _pendingBatch.isEmpty)) {
+      return;
+    }
+
+    if (_pendingBatch.isEmpty) {
+      debugPrint('⚠️ Không có batch để flush.');
+      return;
+    }
+
+    _isFlushingBatch = true;
+
+    try {
+      final batch = List<Map<String, dynamic>>.from(_pendingBatch);
+      _pendingBatch.clear();
+      _batchTimer?.cancel();
+      _batchTimer = null;
+
+      final ids = await HistoryDatabase.instance.batchInsertScans(batch);
+      if (ids.isEmpty) {
+        debugPrint('⚠️ Không insert được batch.');
+        return;
+      }
+
+      for (int i = 0; i < batch.length; i++) {
+        unawaited(_sendToServer(batch[i], ids[i]));
+      }
+
+      // Load local data sau khi insert batch
+      await _loadLocal();
+    } catch (e, st) {
+      debugPrint('❌ Lỗi khi flush batch: $e\n$st');
+    } finally {
+      _isFlushingBatch = false;
+    }
   }
 
   // =================== Scan / Connect ===================
@@ -235,6 +364,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
+      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Lỗi kết nối: $e')));
     }
@@ -258,39 +388,88 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     setState(() => _localData = data);
   }
 
-  Future<void> _sendToServer(String tag, String idLocal) async {
-    final url = Uri.parse(serverUrl);
+  // =================== GỬI SERVER SONG SONG (giống rfid_scan_service) ===================
+  Future<void> _sendToServer(Map<String, dynamic> data, String idLocal) async {
+    final epc = data['barcode'] ?? '';
+
+    if (_sendingIds.contains(idLocal) ||
+        _requestQueue.any((r) => r.idLocal == idLocal)) {
+      return;
+    }
+
+    if (_activeRequests >= maxConcurrentRequests) {
+      _requestQueue.add(_QueuedRequest(data, idLocal));
+      return;
+    }
+
+    _sendingIds.add(idLocal);
+    _activeRequests++;
+
+    final DateTime startTime = DateTime.now();
+    final Stopwatch stopwatch = Stopwatch()..start();
+
     final body = {
-      'barcode': tag,
-      'timestamp_device': DateTime.now().toIso8601String(),
+      'barcode': epc,
+      'epc_hex': data['epc_hex'],
+      'tid_hex': data['tid_hex'],
+      'user_hex': data['user_hex'],
+      'rssi': data['rssi'],
+      'count': data['count'],
+      'timestamp_device': startTime.toIso8601String(),
       'status_sync': true,
     };
 
     try {
-      final resp = await http.post(url,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body));
+      final response = await http
+          .post(Uri.parse(serverUrl),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body))
+          .timeout(const Duration(seconds: 6));
 
-      if (resp.statusCode == 200 || resp.statusCode == 201) {
-        await HistoryDatabase.instance.updateStatusById(idLocal, 'synced');
+      stopwatch.stop();
+      final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        await HistoryDatabase.instance.updateStatusById(
+          idLocal,
+          'synced',
+          syncDurationMs: syncDurationMs,
+        );
         _retryCounter.remove(idLocal);
-        await _loadLocal();
+        // debugPrint('Đồng bộ thành công: $epc, ID: $idLocal');
       } else {
-        _handleRetryFail(idLocal);
+        await _handleRetryFail(
+            idLocal, data, 'Server error ${response.statusCode}');
       }
-    } catch (_) {
-      _handleRetryFail(idLocal);
+    } catch (e) {
+      stopwatch.stop();
+      await _handleRetryFail(idLocal, data, e.toString());
+    } finally {
+      _sendingIds.remove(idLocal);
+      _activeRequests--;
+
+      if (_requestQueue.isNotEmpty) {
+        final next = _requestQueue.removeAt(0);
+        unawaited(_sendToServer(next.data, next.idLocal));
+      }
     }
   }
 
-  void _handleRetryFail(String idLocal) async {
+  Future<void> _handleRetryFail(
+      String idLocal, Map<String, dynamic> data, String error) async {
     _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
-    if (_retryCounter[idLocal]! >= 3) {
+    final retryCount = _retryCounter[idLocal]!;
+
+    if (retryCount >= maxRetryAttempts) {
       await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
       _retryCounter.remove(idLocal);
+      debugPrint(
+          '❌ Mã ${data['barcode']} đã failed sau $maxRetryAttempts lần thử');
     } else {
-      await HistoryDatabase.instance.updateStatusById(idLocal, 'pending');
+      await Future.delayed(const Duration(milliseconds: 500));
+      unawaited(_sendToServer(data, idLocal));
     }
+
     await _loadLocal();
   }
 
@@ -299,12 +478,33 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       if (_isSyncing) return;
       _isSyncing = true;
+
       try {
         final pending = await HistoryDatabase.instance.getPendingScans();
+
         for (final scan in pending) {
-          final tag = scan['barcode'] as String;
           final idLocal = scan['id_local'] as String;
-          _sendToServer(tag, idLocal);
+
+          final currentRetry = _retryCounter[idLocal] ?? 0;
+
+          if (currentRetry >= maxRetryAttempts) {
+            await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
+            _retryCounter.remove(idLocal);
+            debugPrint('❌ Sync worker: Mã ${scan['barcode']} đã failed');
+            continue;
+          }
+
+          // Tạo data map từ scan
+          final data = {
+            'barcode': scan['barcode'],
+            'epc_hex': scan['epc_hex'],
+            'tid_hex': scan['tid_hex'],
+            'user_hex': scan['user_hex'],
+            'rssi': scan['rssi'],
+            'count': scan['count'],
+          };
+
+          await _sendToServer(data, idLocal);
         }
       } finally {
         _isSyncing = false;
@@ -318,22 +518,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
       await _loadLocal();
     });
   }
-
-  // // =================== UI ===================
-  // @override
-  // Widget build(BuildContext context) {
-  //   return Scaffold(
-  //     appBar: AppBar(title: const Text('RFID Bluetooth')),
-  //     body: Column(
-  //       children: [
-  //         _buildConnectionStatus(),
-  //         Expanded(
-  //           child: _showRfidSection ? _buildRfidSection() : _buildDeviceList(),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
 
   // =================== UI ===================
   @override
@@ -443,9 +627,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     );
   }
 
-  // =================== Nút hành động riêng ===================
   Widget _buildActionButton() {
-    // Nếu UI quét RFID
     if (_showRfidSection) {
       return ElevatedButton.icon(
         onPressed: _isConnected
@@ -461,7 +643,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         ),
       );
     }
-    // Nếu UI Scan Bluetooth
     return ElevatedButton.icon(
       onPressed: _isScanning ? _stopScan : _startScanBluetooth,
       icon: Icon(_isScanning ? Icons.stop : Icons.search),
@@ -575,19 +756,41 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         Expanded(
           child: Row(
             children: [
-              // Scanned data
               Expanded(
                 child: Column(
                   children: [
                     Container(
-                      height: 60,
+                      height: 90,
                       color: Colors.blue.shade50,
                       padding: const EdgeInsets.all(8),
                       width: double.infinity,
-                      child: Text(
-                        'Dữ liệu đã quét (${_localData.length})',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, color: Colors.blue),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Dữ liệu đã quét',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          Text(
+                            '(${_localData.length})',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.blueGrey,
+                            ),
+                          ),
+                          Text(
+                            'Tốc độ: $_scansInLastSecond mã/giây',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Expanded(child: _buildScannedList()),
@@ -595,19 +798,41 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
                 ),
               ),
               const VerticalDivider(width: 1),
-              // Synced data
               Expanded(
                 child: Column(
                   children: [
                     Container(
-                      height: 60,
+                      height: 90,
                       color: Colors.green.shade50,
                       padding: const EdgeInsets.all(8),
                       width: double.infinity,
-                      child: Text(
-                        'Dữ liệu đồng bộ (${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, color: Colors.green),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Dữ liệu đồng bộ',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green,
+                            ),
+                          ),
+                          Text(
+                            '(${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.green,
+                            ),
+                          ),
+                          Text(
+                            'Tốc độ: $_syncsInLastSecond mã/giây',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     Expanded(child: _buildSyncedList()),
@@ -625,14 +850,35 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     if (_localData.isEmpty) return const Center(child: Text('Chưa có dữ liệu'));
     return ListView.builder(
       itemCount: _localData.length,
-      itemBuilder: (_, i) => Container(
-        height: 70,
-        decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: Colors.black12))),
-        child: ListTile(
-            title: Text(_localData[i]['barcode'] ?? '---',
-                style: const TextStyle(fontSize: 13))),
-      ),
+      itemBuilder: (_, i) {
+        final item = _localData[i];
+        final scanDuration = item['scan_duration_ms'];
+        return Container(
+          height: 80,
+          decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.black12))),
+          child: ListTile(
+            title: Text(
+              _localData[i]['barcode'] ?? '---',
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trạng thái: ${item['status'] ?? '---'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                if (scanDuration != null)
+                  Text(
+                    'Tốc độ quét: ${scanDuration.toStringAsFixed(2)}ms/mã',
+                    style: const TextStyle(fontSize: 11, color: Colors.blue),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -652,8 +898,11 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
       itemBuilder: (_, i) {
         final item = _localData[i];
         final status = item['status'] ?? 'pending';
+        final statusText = statusMap[status] ?? status;
+        final syncDuration = item['sync_duration_ms'];
 
         Color backgroundColor;
+        // ignore: unused_local_variable
         Color textColor;
 
         switch (status) {
@@ -671,16 +920,31 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         }
 
         return Container(
-          height: 70,
+          height: 80,
           color: backgroundColor,
           child: ListTile(
             title: Text(
               item['barcode'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
-            subtitle: Text(
-              'Trạng thái: ${statusMap[status] ?? status}',
-              style: TextStyle(fontSize: 12, color: textColor),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trạng thái: $statusText',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: status == 'synced'
+                        ? Colors.green
+                        : (status == 'failed' ? Colors.red : Colors.orange),
+                  ),
+                ),
+                if (syncDuration != null && status == 'synced')
+                  Text(
+                    'Tốc độ đồng bộ: ${syncDuration.toStringAsFixed(2)}ms/mã',
+                    style: const TextStyle(fontSize: 11, color: Colors.green),
+                  ),
+              ],
             ),
           ),
         );
@@ -702,6 +966,14 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
 
   Future<void> _stopReading() async {
     if (!_isConnected) return;
+
+    _batchTimer?.cancel();
+    _batchTimer = null;
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = null;
+
+    await _flushBatch(force: true);
+
     await RfidBlePlugin.stopInventory();
     if (!mounted) return;
     setState(() => _isReading = false);
@@ -711,22 +983,17 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     await HistoryDatabase.instance.clearHistory();
     await _loadLocal();
     _rfidTags.clear();
+    _retryCounter.clear();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Đã xóa lịch sử')),
       );
     }
   }
+}
 
-  @override
-  void dispose() {
-    _scanSubscription?.cancel();
-    _rfidSubscription?.cancel();
-    _connectionSubscription?.cancel();
-    _configSubscription?.cancel();
-    _bluetoothStateSubscription?.cancel();
-    _syncTimer?.cancel();
-    _autoRefreshTimer?.cancel();
-    super.dispose();
-  }
+class _QueuedRequest {
+  final Map<String, dynamic> data;
+  final String idLocal;
+  _QueuedRequest(this.data, this.idLocal);
 }
