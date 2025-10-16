@@ -59,6 +59,10 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
     //Hashmap data
     // private Map<String, Object> tagDataList = new HashMap<>();
 
+    private long lastScanStartTime = 0;
+    private long lastScanStartTimeNs = 0;
+
+
     // Hàm chuyển từ HEX sang ASCII
     private String hexToAscii(String hex) {
         if (hex == null) return "";
@@ -342,6 +346,12 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             String tidAscii = hexToAscii(tidHex);
             String userAscii = hexToAscii(userHex);
 
+            long endTimeNs = System.nanoTime();
+            long scanDurationNs = (lastScanStartTimeNs > 0)
+                    ? (endTimeNs - lastScanStartTimeNs)
+                    : 0;
+            double scanDurationMs = scanDurationNs / 1_000_000.0;
+
             dataMap.put("epc_hex", epcHex);
             dataMap.put("epc_ascii", epcAscii);
             dataMap.put("tid_hex", tidHex);
@@ -351,9 +361,14 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             dataMap.put("rssi", tagInfo.getRssi() != null ? tagInfo.getRssi() : "");
             dataMap.put("count", tagInfo.getCount());
 
+            dataMap.put("scan_duration_ms", scanDurationMs);
+            dataMap.put("scan_duration_ns", scanDurationNs);
+
+
             scanHandler.post(() -> tagsSink.success(dataMap));
 
-            Log.d(TAG, "RFID Data Sent: EPC=" + epcAscii + " (HEX: " + epcHex + ")");
+            Log.d(TAG, "RFID Data Sent: EPC=" + epcAscii +
+                " | Thời gian quét: " + scanDurationMs + " ms (" + scanDurationNs + " ns)");
         }
     }
 
@@ -363,31 +378,17 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             return;
         }
         try {
+
+            lastScanStartTimeNs = System.nanoTime();
             UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
-            // if (tagInfo != null) {
-            //     String epcHex = tagInfo.getEPC();
-            //     String epcAscii = hexToAscii(epcHex);
-            //     String rssi = tagInfo.getRssi();
-
-            //     if (tagsSink != null) tagsSink.success(epcAscii);
-
-            //     //if (tagsSink != null) tagsSink.success("EPC: " + epcAscii + ", RSSI: " + rssi);
-
-            //     // Nếu cần debug thêm, bạn có thể gửi cả HEX và ASCII:
-            //     // if (tagsSink != null) tagsSink.success("EPC_HEX: " + epcHex + ", EPC_ASCII: " + epcAscii + ", RSSI: " + rssi);
-
-            //     result.success(true);
-            // } else {
-            //     result.success(false);
-            // }
 
             if (tagInfo != null) {
                 sendRfidData(tagInfo);
                 result.success(true);
             } else {
+                Log.d(TAG, "❌ Không quét được tag ");
                 result.success(false);
             }
-
 
         } catch (Exception e) {
             Log.e(TAG, "Lỗi quét RFID: " + e.getMessage());
@@ -395,79 +396,63 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         }
     }
 
+
     private void startContinuousScan(MethodChannel.Result result) {
-    if (uhfReader == null) {
-        result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
-        return;
-    }
-    try {
-        if (isScanning) {
-            result.success(true);
+        if (uhfReader == null) {
+            result.error("NOT_CONNECTED", "Chưa kết nối RFID", null);
             return;
         }
 
-        isScanning = true;
-
-        new Thread(() -> {
-            while (isScanning) {
-                try {
-                    // Bắt đầu đo thời gian (tùy chọn)
-                    long startTime = System.currentTimeMillis();
-
-                    // Gọi đọc 1 tag
-                    UHFTAGInfo tagInfo = uhfReader.inventorySingleTag();
-
-                    // if (tagInfo != null) {
-                    //     String epcHex = tagInfo.getEPC();
-                    //     String epcAscii = hexToAscii(epcHex);
-
-                    //     scanHandler.post(() -> {
-                    //         if (tagsSink != null) {
-                    //             tagsSink.success(epcAscii);
-                    //         }
-                    //     });
-                    // }
-
-                    if (tagInfo != null) {
-                        sendRfidData(tagInfo);
-                    }   
-
-
-                    // Không sleep — đọc liên tục
-                    long endTime = System.currentTimeMillis();
-                    long duration = endTime - startTime;
-
-                    // Optional: nếu cần giãn nhịp theo thời gian đọc thực tế (tự nhiên)
-                    if (duration < 5) {
-                        // rất ngắn, thêm delay nhẹ tránh loop CPU 100%
-                        Thread.yield();
-                    }
-
-                } catch (Exception e) {
-                    Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
-                }
+        try {
+            if (isScanning) {
+                result.success(true);
+                return;
             }
-        }).start();
 
-        result.success(true);
-    } catch (Exception e) {
-        isScanning = false;
-        Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
-        result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
+            isScanning = true;
+            Log.d(TAG, "🚀 Bắt đầu quét liên tục...");
+
+            // Gọi lệnh bắt đầu quét liên tục trên module (hardware loop)
+            boolean started = uhfReader.startInventoryTag();
+            if (!started) {
+                isScanning = false;
+                result.error("START_FAILED", "Không thể bắt đầu quét liên tục", null);
+                return;
+            }
+
+            // Thread đọc dữ liệu trả về từ module
+            new Thread(() -> {
+                while (isScanning) {
+                    try {
+                        // Gọi inventorySingleTag() để lấy tag hiện có trong buffer
+                        UHFTAGInfo tagInfo = uhfReader.readTagFromBuffer();
+
+                        if (tagInfo != null) {
+                            sendRfidData(tagInfo);
+
+                            // lastScanStartTime = System.currentTimeMillis();
+                            // nếu có biến nanoTime, bạn có thể thêm:
+                            lastScanStartTimeNs = System.nanoTime();
+                        }
+
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in continuous scan loop: " + e.getMessage());
+                    }
+                }
+
+                // Khi vòng lặp dừng
+                uhfReader.stopInventory();
+                Log.d(TAG, "🛑 Dừng quét liên tục (thread).");
+            }).start();
+
+            result.success(true);
+
+        } catch (Exception e) {
+            isScanning = false;
+            Log.e(TAG, "Lỗi quét liên tục RFID: " + e.getMessage());
+            result.error("SCAN_ERROR", "Lỗi quét liên tục RFID: " + e.getMessage(), null);
+        }
     }
-}
-
-
-    // private void stopScan(MethodChannel.Result result) {
-    //     try {
-    //         isScanning = false;
-    //         if (uhfReader != null) uhfReader.stopInventory();
-    //         result.success(true);
-    //     } catch (Exception e) {
-    //         Log.e(TAG, "Lỗi dừng quét: " + e.getMessage());
-    //         result.error("STOP_ERROR", "Lỗi dừng quét: " + e.getMessage(), null);
-    //     }
-    // }
 
     private void stopScan(MethodChannel.Result result) {
         try {

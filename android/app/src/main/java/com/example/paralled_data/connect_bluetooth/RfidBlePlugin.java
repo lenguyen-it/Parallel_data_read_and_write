@@ -79,6 +79,10 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
     private final Set<String> seenDevices = new HashSet<>();
     private boolean lastConnectionState = false;
 
+    private long lastScanStartTime = 0;
+    private long lastScanStartTimeNs = 0;
+
+
 
     
     private void acquireWakeLock() {
@@ -436,66 +440,6 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
         result.success(null);
     }
 
-    // private void connectToDevice(String macAddress, Result result) {
-    //     if (uhfble == null) {
-    //         initializeUHFBLE();
-    //     }
-
-    //     if (macAddress == null || macAddress.isEmpty()) {
-    //         result.error("INVALID_MAC", "MAC address is required", null);
-    //         return;
-    //     }
-
-    //     Log.d(TAG, "Connecting to: " + macAddress);
-
-    //     final boolean[] resultSubmitted = {false};
-
-    //     uhfble.connect(macAddress, new ConnectionStatusCallback<Object>() {
-    //         @Override
-    //         public void getStatus(ConnectionStatus connectionStatus, Object device) {
-    //             BluetoothDevice btDevice = (BluetoothDevice) device;
-                
-    //             mainHandler.post(() -> {
-    //                 if (connectionStatus == ConnectionStatus.CONNECTED) {
-    //                     acquireWakeLock();
-    //                     Log.d(TAG, "Connected to: " + btDevice.getName());
-                        
-    //                     Map<String, Object> statusMap = new HashMap<>();
-    //                     statusMap.put("connection", true);
-    //                     if (connectionEventSink != null) {
-    //                         connectionEventSink.success(statusMap);
-    //                     }
-                        
-    //                     initRFID();
-                        
-    //                     if (!resultSubmitted[0]) {
-    //                         resultSubmitted[0] = true;
-    //                         result.success("Connected to " + btDevice.getName());
-    //                     }
-                        
-    //                 } else if (connectionStatus == ConnectionStatus.DISCONNECTED) {
-    //                     releaseWakeLock();  
-    //                     Log.d(TAG, "Disconnected from: " + btDevice.getName());
-                        
-    //                     Map<String, Object> statusMap = new HashMap<>();
-    //                     statusMap.put("connection", false);
-    //                     if (connectionEventSink != null) {
-    //                         connectionEventSink.success(statusMap);
-    //                     }
-                        
-    //                     if (!resultSubmitted[0]) {
-    //                         resultSubmitted[0] = true;
-    //                         result.error("DISCONNECTED", "Failed to connect", null);
-    //                     }
-                        
-    //                 } else if (connectionStatus == ConnectionStatus.CONNECTING) {
-    //                     Log.d(TAG, "Connecting to: " + btDevice.getName());
-    //                 }
-    //             });
-    //         }
-    //     });
-    // }
-
     private void connectToDevice(String macAddress, Result result) {
         if (uhfble == null) {
             initializeUHFBLE();
@@ -564,18 +508,6 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
         });
     }
 
-    // private void disconnectDevice(Result result) {
-    //     if (uhfble != null) {
-    //         uhfble.disconnect();
-            
-    //         Map<String, Object> statusMap = new HashMap<>();
-    //         statusMap.put("connection", false);
-    //         if (connectionEventSink != null) {
-    //             mainHandler.post(() -> connectionEventSink.success(statusMap));
-    //         }
-    //     }
-    //     result.success(null);
-    // }
     private void disconnectDevice(Result result) {
         if (uhfble != null) {
             uhfble.disconnect();
@@ -599,7 +531,10 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
             return;
         }
 
+        // lastScanStartTime = System.currentTimeMillis();
+        lastScanStartTimeNs = System.nanoTime();
         UHFTAGInfo tagInfo = uhfble.inventorySingleTag();
+
         if (tagInfo != null) {
             sendRfidData(tagInfo);
             result.success(null);
@@ -619,11 +554,16 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
             return;
         }
 
+        // lastScanStartTime = System.currentTimeMillis();
+        lastScanStartTimeNs = System.nanoTime();
+
         uhfble.setInventoryCallback(new IUHFInventoryCallback() {
             @Override
             public void callback(UHFTAGInfo uhftagInfo) {
                 if (uhftagInfo != null) {
                     sendRfidData(uhftagInfo);
+                    // lastScanStartTime = System.currentTimeMillis();
+                    lastScanStartTimeNs = System.nanoTime();
                 }
             }
         });
@@ -678,6 +618,12 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
             String tidAscii = hexToAscii(tidHex);
             String userAscii = hexToAscii(userHex);
 
+            long endTimeNs = System.nanoTime();
+            long scanDurationNs = (lastScanStartTimeNs > 0)
+                    ? (endTimeNs - lastScanStartTimeNs)
+                    : 0;
+            double scanDurationMs = scanDurationNs / 1_000_000.0;
+
             dataMap.put("epc_hex", epcHex);
             dataMap.put("epc_ascii", epcAscii);
             dataMap.put("tid_hex", tidHex);
@@ -687,9 +633,13 @@ public class RfidBlePlugin implements FlutterPlugin, MethodCallHandler, Activity
             dataMap.put("rssi", tagInfo.getRssi() != null ? tagInfo.getRssi() : "");
             dataMap.put("count", tagInfo.getCount());
 
+            dataMap.put("scan_duration_ms", scanDurationMs);
+            dataMap.put("scan_duration_ns", scanDurationNs);
+
             mainHandler.post(() -> rfidDataSink.success(dataMap));
 
-            Log.d(TAG, "RFID Data Sent: EPC=" + epcAscii + " (HEX: " + epcHex + ")");
+            Log.d(TAG, "RFID Data Sent: EPC=" + epcAscii +
+                " | Thời gian quét: " + scanDurationMs + " ms (" + scanDurationNs + " ns)");
         }
     }
 
