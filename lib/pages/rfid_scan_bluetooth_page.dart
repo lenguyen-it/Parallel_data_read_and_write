@@ -405,8 +405,9 @@ class _RfidScanBluetoothPageState extends State<RfidScanBluetoothPage> {
   }
 
   Widget _buildScannedList() {
-    if (_service.localData.isEmpty)
+    if (_service.localData.isEmpty) {
       return const Center(child: Text('Chưa có dữ liệu'));
+    }
     return ListView.builder(
       itemCount: _service.localData.length,
       itemBuilder: (_, i) {
@@ -461,6 +462,7 @@ class _RfidScanBluetoothPageState extends State<RfidScanBluetoothPage> {
         final syncDuration = item['sync_duration_ms'];
 
         Color backgroundColor;
+        // ignore: unused_local_variable
         Color textColor;
 
         switch (status) {
