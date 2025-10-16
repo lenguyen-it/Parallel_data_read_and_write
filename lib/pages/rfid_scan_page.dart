@@ -14,12 +14,33 @@ class _RfidScanPageState extends State<RfidScanPage> {
   final RfidScanService _scanService = RfidScanService();
   List<Map<String, dynamic>> _localData = [];
   StreamSubscription<Map<String, dynamic>>? _subscription;
+  StreamSubscription<Map<String, dynamic>>? _syncSubscription;
+  StreamSubscription<Map<String, dynamic>>? _uiUpdateSubscription;
   Timer? _autoRefreshTimer;
   bool _isLoading = false;
 
-  //Hiển thị tag mới nhất
   // ignore: unused_field
   Map<String, dynamic>? _lastTagData;
+
+  // Lưu timestamp của các lần quét trong 1 giây
+  final List<DateTime> _scanTimestamps = [];
+
+  // Lưu timestamp của các lần đồng bộ trong 1 giây
+  final List<DateTime> _syncTimestamps = [];
+
+  int get _scansInLastSecond {
+    final now = DateTime.now();
+    final oneSecondAgo = now.subtract(const Duration(seconds: 1));
+    _scanTimestamps.removeWhere((t) => t.isBefore(oneSecondAgo));
+    return _scanTimestamps.length;
+  }
+
+  int get _syncsInLastSecond {
+    final now = DateTime.now();
+    final oneSecondAgo = now.subtract(const Duration(seconds: 1));
+    _syncTimestamps.removeWhere((t) => t.isBefore(oneSecondAgo));
+    return _syncTimestamps.length;
+  }
 
   @override
   void initState() {
@@ -32,26 +53,42 @@ class _RfidScanPageState extends State<RfidScanPage> {
     _scanService.attachTagStream();
     await _loadLocal();
 
-    // Lắng nghe luồng dữ liệu RFID mới
-    _subscription = _scanService.tagStream.listen((data) async {
-      setState(() => _lastTagData = data);
+    _subscription = _scanService.tagStream.listen((data) {
+      setState(() {
+        _lastTagData = data;
+        _scanTimestamps.add(DateTime.now());
+      });
+    });
+
+    _uiUpdateSubscription = _scanService.uiUpdateStream.listen((data) async {
       await _loadLocal();
     });
 
-    // Tự động cập nhật mỗi 2 giây
+    _syncSubscription = _scanService.syncStream.listen((data) {
+      setState(() {
+        _syncTimestamps.add(DateTime.now());
+      });
+      _loadLocal();
+    });
+
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       await _loadLocal();
+      if (mounted) setState(() {});
     });
   }
 
   Future<void> _loadLocal() async {
     final data = await HistoryDatabase.instance.getAllScans();
-    setState(() => _localData = data);
+    if (mounted) {
+      setState(() => _localData = data);
+    }
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
+    _syncSubscription?.cancel();
+    _uiUpdateSubscription?.cancel();
     _autoRefreshTimer?.cancel();
     _scanService.dispose();
     super.dispose();
@@ -91,8 +128,10 @@ class _RfidScanPageState extends State<RfidScanPage> {
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
+        final scanDuration = item['scan_duration_ms'];
+
         return Container(
-          height: 70,
+          height: 80,
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: Colors.black12)),
           ),
@@ -101,9 +140,19 @@ class _RfidScanPageState extends State<RfidScanPage> {
               item['barcode'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
-            subtitle: Text(
-              'Trạng thái: ${item['status'] ?? '---'}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trạng thái: ${item['status'] ?? '---'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                if (scanDuration != null)
+                  Text(
+                    'Tốc độ quét: ${scanDuration.toStringAsFixed(2)}ms/mã',
+                    style: const TextStyle(fontSize: 11, color: Colors.blue),
+                  ),
+              ],
             ),
           ),
         );
@@ -130,6 +179,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
         final code = item['barcode'] ?? '---';
         final status = item['status'] ?? 'pending';
         final statusText = statusMap[status] ?? status;
+        final syncDuration = item['sync_duration_ms'];
 
         Color bgColor;
         switch (status) {
@@ -144,52 +194,37 @@ class _RfidScanPageState extends State<RfidScanPage> {
         }
 
         return Container(
-          height: 70,
+          height: 80,
           color: bgColor,
           child: ListTile(
             title: Text(
               code,
               style: const TextStyle(fontSize: 13),
             ),
-            subtitle: Text(
-              'Trạng thái: $statusText',
-              style: TextStyle(
-                fontSize: 13,
-                color: status == 'synced'
-                    ? Colors.green
-                    : (status == 'failed' ? Colors.red : Colors.orange),
-              ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trạng thái: $statusText',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: status == 'synced'
+                        ? Colors.green
+                        : (status == 'failed' ? Colors.red : Colors.orange),
+                  ),
+                ),
+                if (syncDuration != null && status == 'synced')
+                  Text(
+                    'Tốc độ đồng bộ: ${syncDuration.toStringAsFixed(2)}ms/mã',
+                    style: const TextStyle(fontSize: 11, color: Colors.green),
+                  ),
+              ],
             ),
           ),
         );
       },
     );
   }
-
-  /// 🔹 Thông tin tag RFID vừa đọc
-  // Widget _buildLastTagInfo() {
-  //   final tag = _lastTagData;
-  //   if (tag == null) {
-  //     return const Text(
-  //       'Chưa đọc được thẻ nào',
-  //       style: TextStyle(fontSize: 13, color: Colors.black54),
-  //     );
-  //   }
-
-  //   return Column(
-  //     crossAxisAlignment: CrossAxisAlignment.start,
-  //     children: [
-  //       Text('EPC: ${tag['epc_ascii'] ?? tag['epc_hex'] ?? '---'}',
-  //           style: const TextStyle(fontSize: 13)),
-  //       if (tag['tid_hex'] != null)
-  //         Text('TID: ${tag['tid_hex']}', style: const TextStyle(fontSize: 12)),
-  //       if (tag['rssi'] != null)
-  //         Text('RSSI: ${tag['rssi']}', style: const TextStyle(fontSize: 12)),
-  //       if (tag['count'] != null)
-  //         Text('COUNT: ${tag['count']}', style: const TextStyle(fontSize: 12)),
-  //     ],
-  //   );
-  // }
 
   @override
   Widget build(BuildContext context) {
@@ -229,57 +264,97 @@ class _RfidScanPageState extends State<RfidScanPage> {
             ),
           ),
 
-          // ----------- Hiển thị tag mới nhất -----------
-          // Container(
-          //   padding: const EdgeInsets.all(8),
-          //   color: Colors.grey.shade100,
-          //   width: double.infinity,
-          //   child: _buildLastTagInfo(),
-          // ),
-
           const Divider(height: 1),
 
           // ----------- Hai cột dữ liệu -----------
           Expanded(
             child: Row(
               children: [
+                // ===== CỘT BÊN TRÁI: DỮ LIỆU ĐÃ QUÉT =====
                 Expanded(
                   child: Column(
                     children: [
                       Container(
-                        height: 50,
+                        height: 80,
                         color: Colors.blue.shade50,
                         alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.all(8.0),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8.0, vertical: 6.0),
                         width: double.infinity,
-                        child: Text(
-                          'Dữ liệu đã quét (${_localData.length})',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Dữ liệu đã quét',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                              ),
+                            ),
+                            Text(
+                              '(${_localData.length})',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.blueGrey,
+                              ),
+                            ),
+                            Text(
+                              'Tốc độ: $_scansInLastSecond mã/giây',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       Expanded(child: _buildScannedList()),
                     ],
                   ),
                 ),
+
                 const VerticalDivider(width: 1),
+
+                // ===== CỘT BÊN PHẢI: DỮ LIỆU ĐỒNG BỘ =====
                 Expanded(
                   child: Column(
                     children: [
                       Container(
-                        height: 50,
+                        height: 80,
                         color: Colors.green.shade50,
                         alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.all(8.0),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8.0, vertical: 6.0),
                         width: double.infinity,
-                        child: Text(
-                          'Dữ liệu đồng bộ (${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Dữ liệu đồng bộ',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                            Text(
+                              '(${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.green,
+                              ),
+                            ),
+                            Text(
+                              'Tốc độ: $_syncsInLastSecond mã/giây',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       Expanded(child: _buildSyncedList()),
@@ -288,7 +363,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                 ),
               ],
             ),
-          ),
+          )
         ],
       ),
     );
