@@ -424,7 +424,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           .post(Uri.parse(serverUrl),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode(body))
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 1));
 
       stopwatch.stop();
       final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
@@ -436,7 +436,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           syncDurationMs: syncDurationMs,
         );
         _retryCounter.remove(idLocal);
-        // debugPrint('Đồng bộ thành công: $epc, ID: $idLocal');
       } else {
         await _handleRetryFail(
             idLocal, data, 'Server error ${response.statusCode}');
