@@ -239,13 +239,11 @@ class RfidScanService {
   Future<void> _sendToServer(Map<String, dynamic> data, String idLocal) async {
     final epc = data['barcode'] ?? '';
 
-    if (_sendingIds.contains(idLocal) ||
-        _requestQueue.any((r) => r.idLocal == idLocal)) {
-      return;
-    }
+    final bool isRetryCall = _retryCounter.containsKey(idLocal);
 
-    if (_activeRequests >= maxConcurrentRequests) {
-      _requestQueue.add(_QueuedRequest(data, idLocal));
+    if (!isRetryCall &&
+        (_sendingIds.contains(idLocal) ||
+            _requestQueue.any((r) => r.idLocal == idLocal))) {
       return;
     }
 
@@ -271,7 +269,7 @@ class RfidScanService {
           .post(Uri.parse(serverUrl),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode(body))
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 1));
 
       stopwatch.stop();
       final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
@@ -282,8 +280,11 @@ class RfidScanService {
           'synced',
           syncDurationMs: syncDurationMs,
         );
-        _syncController.add({'id': idLocal, 'duration_ms': syncDurationMs});
+        _syncController
+            .add({'id': idLocal, 'scan_duration_ms': syncDurationMs});
       } else {
+        debugPrint(
+            '🔁 [$idLocal] Server error ${response.statusCode}, retrying...');
         await _handleRetryFail(
             idLocal, data, 'Server error ${response.statusCode}');
       }
@@ -306,8 +307,9 @@ class RfidScanService {
     _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
     final retryCount = _retryCounter[idLocal]!;
 
-    if (retryCount >= 3) {
+    if (retryCount > 3) {
       await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
+      _syncController.add({'id': idLocal, 'status': 'failed'});
       _retryCounter.remove(idLocal);
     } else {
       await Future.delayed(const Duration(milliseconds: 500));
