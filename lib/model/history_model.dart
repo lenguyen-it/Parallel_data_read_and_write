@@ -36,7 +36,7 @@
 
 class HistoryModel {
   final String idLocal;
-  final String barcode;
+  final String epc;
   final int timestampDevice;
   final String status;
   final String? lastError;
@@ -45,7 +45,7 @@ class HistoryModel {
 
   HistoryModel({
     required this.idLocal,
-    required this.barcode,
+    required this.epc,
     required this.timestampDevice,
     required this.status,
     this.lastError,
@@ -56,7 +56,7 @@ class HistoryModel {
   Map<String, dynamic> toMap() {
     return {
       'id_local': idLocal,
-      'barcode': barcode,
+      'epc': epc,
       'timestamp_device': timestampDevice,
       'status': status,
       'last_error': lastError,
@@ -68,7 +68,7 @@ class HistoryModel {
   factory HistoryModel.fromMap(Map<String, dynamic> map) {
     return HistoryModel(
       idLocal: map['id_local'],
-      barcode: map['barcode'],
+      epc: map['epc'],
       timestampDevice: map['timestamp_device'],
       status: map['status'],
       lastError: map['last_error'],

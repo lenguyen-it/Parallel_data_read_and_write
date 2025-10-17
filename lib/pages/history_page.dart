@@ -90,13 +90,13 @@ class _HistoryPageState extends State<HistoryPage> {
                       it['timestamp_device'] ?? 0);
                   return ListTile(
                     leading: Icon(
-                        it['barcode']?.startsWith('E') == true
+                        it['epc']?.startsWith('E') == true
                             ? Icons.nfc
                             : Icons.qr_code,
-                        color: it['barcode']?.startsWith('E') == true
+                        color: it['epc']?.startsWith('E') == true
                             ? Colors.blue
                             : Colors.orange),
-                    title: Text(it['barcode'] ?? ''),
+                    title: Text(it['epc'] ?? ''),
                     subtitle:
                         Text('${ts.toString()}\n${it['last_error'] ?? ''}'),
                     trailing: _statusBadge(it['status'] ?? 'pending'),

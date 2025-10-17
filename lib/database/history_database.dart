@@ -28,7 +28,7 @@ class HistoryDatabase {
     await db.execute('''
       CREATE TABLE history_scans (
         id_local TEXT PRIMARY KEY,
-        barcode TEXT,
+        epc TEXT,
         timestamp_device INTEGER,
         status TEXT,
         sync INTEGER DEFAULT 0,
@@ -56,7 +56,7 @@ class HistoryDatabase {
 
     await db.insert('history_scans', {
       'id_local': id,
-      'barcode': code,
+      'epc': code,
       'timestamp_device': now,
       'status': status,
       'last_error': error,
@@ -87,7 +87,7 @@ class HistoryDatabase {
         ids.add(id);
         batch.insert('history_scans', {
           'id_local': id,
-          'barcode': scan['barcode'] ?? '',
+          'epc': scan['epc'] ?? '',
           'timestamp_device': now,
           'status': status,
           'last_error': scan['last_error'],

@@ -419,7 +419,7 @@ class _RfidScanBluetoothPageState extends State<RfidScanBluetoothPage> {
               border: Border(bottom: BorderSide(color: Colors.black12))),
           child: ListTile(
             title: Text(
-              _service.localData[i]['barcode'] ?? '---',
+              _service.localData[i]['epc'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
             subtitle: Column(
@@ -484,7 +484,7 @@ class _RfidScanBluetoothPageState extends State<RfidScanBluetoothPage> {
           color: backgroundColor,
           child: ListTile(
             title: Text(
-              item['barcode'] ?? '---',
+              item['epc'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
             subtitle: Column(

@@ -142,7 +142,7 @@ class BarcodeScanService {
   Future<void> _sendToServer(String barcode, String idLocal) async {
     final url = Uri.parse(serverUrl);
     final body = {
-      'barcode': barcode,
+      'epc': barcode,
       'timestamp_device': DateTime.now().toIso8601String(),
       'status_sync': true,
     };
@@ -193,7 +193,7 @@ class BarcodeScanService {
   Future<void> retryPendingScans() async {
     final pending = await HistoryDatabase.instance.getPendingScans();
     for (final scan in pending) {
-      final code = scan['barcode'] as String;
+      final code = scan['epc'] as String;
       final idLocal = scan['id_local'] as String;
       unawaited(_sendToServer(code, idLocal));
     }

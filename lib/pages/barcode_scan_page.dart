@@ -93,7 +93,7 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
           ),
           child: ListTile(
             title: Text(
-              item['barcode'] ?? '---',
+              item['epc'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
           ),
@@ -118,7 +118,7 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
-        final code = item['barcode'] ?? '---';
+        final code = item['epc'] ?? '---';
         final status = item['status'] ?? 'pending';
 
         final statusText = statusMap[status] ?? status;
