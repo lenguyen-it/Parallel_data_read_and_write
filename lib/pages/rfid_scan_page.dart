@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:paralled_data/database/history_database.dart';
 import 'package:paralled_data/services/rfid_scan_service.dart';
+import 'package:paralled_data/services/temp_storage_service.dart';
 
 class RfidScanPage extends StatefulWidget {
   const RfidScanPage({super.key});
@@ -17,7 +19,9 @@ class _RfidScanPageState extends State<RfidScanPage> {
   StreamSubscription<Map<String, dynamic>>? _syncSubscription;
   StreamSubscription<Map<String, dynamic>>? _uiUpdateSubscription;
   Timer? _autoRefreshTimer;
+
   bool _isLoading = false;
+  bool _isScanning = false;
 
   // ignore: unused_field
   Map<String, dynamic>? _lastTagData;
@@ -108,14 +112,186 @@ class _RfidScanPageState extends State<RfidScanPage> {
 
   Future<void> _handleContinuousScan() async {
     try {
+      setState(() => _isScanning = true);
       await _scanService.startContinuousScan();
     } catch (e) {
       debugPrint('Continuous scan error: $e');
     }
   }
 
-  Future<void> _handleStopScan() async {
-    await _scanService.stopScan();
+  void _handleStopScan() async {
+    await RfidScanService().stopScan();
+    setState(() => _isScanning = false);
+  }
+
+  /// 🔹 Hiển thị dialog xem dữ liệu file tạm
+  Future<void> _showTempFileDialog() async {
+    try {
+      final tempData = await TempStorageService().readAllTempData();
+      final count = tempData.length;
+      final filePath = await TempStorageService().getTempFilePath();
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.9,
+            height: MediaQuery.of(context).size.height * 0.8,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Dữ liệu File Tạm',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tổng số: $count records',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Đường dẫn: $filePath',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const Divider(height: 20),
+                Expanded(
+                  child: tempData.isEmpty
+                      ? const Center(
+                          child: Text('File tạm trống'),
+                        )
+                      : ListView.builder(
+                          itemCount: tempData.length,
+                          itemBuilder: (context, index) {
+                            final item = tempData[index];
+                            final jsonStr = const JsonEncoder.withIndent('  ')
+                                .convert(item);
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: ExpansionTile(
+                                title: Text(
+                                  '${index + 1}. ${item['epc'] ?? 'N/A'}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'Timestamp: ${item['timestamp'] ?? 'N/A'}',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    color: Colors.grey.shade100,
+                                    child: SelectableText(
+                                      jsonStr,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final path =
+                            await TempStorageService().downloadTempFile();
+                        if (!mounted) return;
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(path != null
+                                ? 'Đã lưu file: $path'
+                                : 'Lỗi khi lưu file'),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.download, size: 18),
+                      label: const Text('Tải về'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Xác nhận'),
+                            content: const Text(
+                                'Bạn có chắc muốn xóa toàn bộ dữ liệu file tạm?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Hủy'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text('Xóa'),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        if (confirm == true) {
+                          await TempStorageService().clearTempFile();
+                          if (!mounted) return;
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Đã xóa file tạm'),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.delete, size: 18),
+                      label: const Text('Xóa tất cả'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ Lỗi khi hiển thị file tạm: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e')),
+      );
+    }
   }
 
   /// 🔹 Danh sách dữ liệu đã quét
@@ -126,34 +302,34 @@ class _RfidScanPageState extends State<RfidScanPage> {
 
     final statusMap = {
       'pending': 'Đang chờ',
-      'synced': 'Thành công',
-      'failed': 'Thất bại',
+      'synced': 'Đã đồng bộ',
+      'failed': 'Chưa đồng bộ',
     };
 
     return ListView.builder(
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
-        final code = item['barcode'] ?? '---';
+        final code = item['epc'] ?? '---';
         final status = item['status'] ?? 'pending';
         final statusText = statusMap[status] ?? status;
         final scanDuration = item['scan_duration_ms'];
 
-        Color bgColor;
-        switch (status) {
-          case 'synced':
-            bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
-            break;
-          case 'failed':
-            bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
-            break;
-          default:
-            bgColor = const Color(0xFFFFF8E1); // cam nhạt
-        }
+        // Color bgColor;
+        // switch (status) {
+        //   case 'synced':
+        //     bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
+        //     break;
+        //   case 'failed':
+        //     bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
+        //     break;
+        //   default:
+        //     bgColor = const Color(0xFFFFF8E1); // cam nhạt
+        // }
 
         return Container(
           height: 80,
-          color: bgColor,
+          // color: bgColor,
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: Colors.black12)),
           ),
@@ -165,17 +341,17 @@ class _RfidScanPageState extends State<RfidScanPage> {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Trạng thái: $statusText',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: status == 'synced'
-                        ? Colors.green
-                        : (status == 'failed' ? Colors.red : Colors.orange),
-                  ),
-                ),
+                // Text(
+                //   'Trạng thái: $statusText',
+                //   style: TextStyle(
+                //     fontSize: 12,
+                //     color: status == 'synced'
+                //         ? Colors.green
+                //         : (status == 'failed' ? Colors.red : Colors.orange),
+                //   ),
+                // ),
                 //if (scanDuration != null)
-                if (scanDuration != null && status == 'synced')
+                if (scanDuration != null)
                   Text(
                     'Tốc độ quét: ${scanDuration.toStringAsFixed(2)}ms/mã',
                     style: const TextStyle(fontSize: 11, color: Colors.blue),
@@ -204,7 +380,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
-        final code = item['barcode'] ?? '---';
+        final code = item['epc'] ?? '---';
         final status = item['status'] ?? 'pending';
         final statusText = statusMap[status] ?? status;
         final syncDuration = item['sync_duration_ms'];
@@ -223,7 +399,12 @@ class _RfidScanPageState extends State<RfidScanPage> {
 
         return Container(
           height: 80,
-          color: bgColor,
+          decoration: BoxDecoration(
+            color: bgColor,
+            border: const Border(
+              bottom: BorderSide(color: Colors.black12),
+            ),
+          ),
           child: ListTile(
             title: Text(
               code,
@@ -267,29 +448,40 @@ class _RfidScanPageState extends State<RfidScanPage> {
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _handleSingleScan,
-                  child: const Text('Quét 1 lần'),
-                ),
-                ElevatedButton(
-                  onPressed: _handleContinuousScan,
-                  child: const Text('Quét liên tục'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: _handleStopScan,
-                  child: const Text('Dừng'),
-                ),
-                ElevatedButton(
-                  onPressed: _loadLocal,
-                  child: const Text('Tải lại'),
-                ),
-              ],
-            ),
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _handleSingleScan,
+                    child: const Text('Quét 1 lần'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isScanning ? Colors.grey : Colors.green,
+                    ),
+                    onPressed: _isScanning ? null : _handleContinuousScan,
+                    child: const Text('Quét liên tục'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _isScanning ? Colors.red : Colors.grey,
+                    ),
+                    onPressed: _isScanning ? _handleStopScan : null,
+                    child: const Text('Dừng'),
+                  ),
+                  ElevatedButton(
+                    onPressed: _loadLocal,
+                    child: const Text('Tải lại'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.lightGreen,
+                    ),
+                    onPressed: _showTempFileDialog,
+                    child: const Text('Xem file tạm'),
+                  ),
+                ]),
           ),
 
           const Divider(height: 1),
