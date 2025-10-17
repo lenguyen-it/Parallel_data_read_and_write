@@ -262,7 +262,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   // =================== BATCH BUFFER (giống rfid_scan_service) ===================
   void _addToBatch(Map<String, dynamic> data, double scanDurationMs) {
     _pendingBatch.add({
-      'barcode': data['epc_ascii'] ?? '',
+      'epc': data['epc_ascii'] ?? '',
       'scan_duration_ms': scanDurationMs,
       'epc_hex': data['epc_hex'],
       'tid_hex': data['tid_hex'],
@@ -390,7 +390,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
 
   // =================== GỬI SERVER SONG SONG (giống rfid_scan_service) ===================
   Future<void> _sendToServer(Map<String, dynamic> data, String idLocal) async {
-    final epc = data['barcode'] ?? '';
+    final epc = data['epc'] ?? '';
 
     if (_sendingIds.contains(idLocal) ||
         _requestQueue.any((r) => r.idLocal == idLocal)) {
@@ -409,7 +409,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     final Stopwatch stopwatch = Stopwatch()..start();
 
     final body = {
-      'barcode': epc,
+      'epc': epc,
       'epc_hex': data['epc_hex'],
       'tid_hex': data['tid_hex'],
       'user_hex': data['user_hex'],
@@ -462,8 +462,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     if (retryCount >= maxRetryAttempts) {
       await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
       _retryCounter.remove(idLocal);
-      debugPrint(
-          '❌ Mã ${data['barcode']} đã failed sau $maxRetryAttempts lần thử');
+      debugPrint('❌ Mã ${data['epc']} đã failed sau $maxRetryAttempts lần thử');
     } else {
       await Future.delayed(const Duration(milliseconds: 500));
       unawaited(_sendToServer(data, idLocal));
@@ -489,13 +488,13 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           if (currentRetry >= maxRetryAttempts) {
             await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
             _retryCounter.remove(idLocal);
-            debugPrint('❌ Sync worker: Mã ${scan['barcode']} đã failed');
+            debugPrint('❌ Sync worker: Mã ${scan['epc']} đã failed');
             continue;
           }
 
           // Tạo data map từ scan
           final data = {
-            'barcode': scan['barcode'],
+            'epc': scan['epc'],
             'epc_hex': scan['epc_hex'],
             'tid_hex': scan['tid_hex'],
             'user_hex': scan['user_hex'],
@@ -858,7 +857,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
               border: Border(bottom: BorderSide(color: Colors.black12))),
           child: ListTile(
             title: Text(
-              _localData[i]['barcode'] ?? '---',
+              _localData[i]['epc'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
             subtitle: Column(
@@ -923,7 +922,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           color: backgroundColor,
           child: ListTile(
             title: Text(
-              item['barcode'] ?? '---',
+              item['epc'] ?? '---',
               style: const TextStyle(fontSize: 13),
             ),
             subtitle: Column(
