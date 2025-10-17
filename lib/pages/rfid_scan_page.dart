@@ -124,30 +124,58 @@ class _RfidScanPageState extends State<RfidScanPage> {
       return const Center(child: Text('Chưa có dữ liệu'));
     }
 
+    final statusMap = {
+      'pending': 'Đang chờ',
+      'synced': 'Thành công',
+      'failed': 'Thất bại',
+    };
+
     return ListView.builder(
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
+        final code = item['barcode'] ?? '---';
+        final status = item['status'] ?? 'pending';
+        final statusText = statusMap[status] ?? status;
         final scanDuration = item['scan_duration_ms'];
+
+        Color bgColor;
+        switch (status) {
+          case 'synced':
+            bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
+            break;
+          case 'failed':
+            bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
+            break;
+          default:
+            bgColor = const Color(0xFFFFF8E1); // cam nhạt
+        }
 
         return Container(
           height: 80,
+          color: bgColor,
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: Colors.black12)),
           ),
           child: ListTile(
             title: Text(
-              item['barcode'] ?? '---',
+              code,
               style: const TextStyle(fontSize: 13),
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Trạng thái: ${item['status'] ?? '---'}',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  'Trạng thái: $statusText',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: status == 'synced'
+                        ? Colors.green
+                        : (status == 'failed' ? Colors.red : Colors.orange),
+                  ),
                 ),
-                if (scanDuration != null)
+                //if (scanDuration != null)
+                if (scanDuration != null && status == 'synced')
                   Text(
                     'Tốc độ quét: ${scanDuration.toStringAsFixed(2)}ms/mã',
                     style: const TextStyle(fontSize: 11, color: Colors.blue),
