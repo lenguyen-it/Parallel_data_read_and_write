@@ -128,6 +128,41 @@ class HistoryDatabase {
     );
   }
 
+  Future<void> batchUpdateStatus(List<dynamic> updates) async {
+    if (updates.isEmpty) return;
+
+    final db = await instance.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+
+      for (var update in updates) {
+        final updateData = <String, dynamic>{
+          'status': update.status,
+          'updated_at': now,
+        };
+
+        if (update.syncDurationMs != null) {
+          updateData['sync_duration_ms'] = update.syncDurationMs;
+        }
+
+        if (update.error != null) {
+          updateData['last_error'] = update.error;
+        }
+
+        batch.update(
+          'history_scans',
+          updateData,
+          where: 'id_local = ?',
+          whereArgs: [update.idLocal],
+        );
+      }
+
+      await batch.commit(noResult: true);
+    });
+  }
+
   /// ------------------ GETTERS ------------------
   Future<List<Map<String, dynamic>>> getPendingScans() async {
     final db = await instance.database;
@@ -145,6 +180,13 @@ class HistoryDatabase {
       'history_scans',
       orderBy: 'timestamp_device DESC',
     );
+  }
+
+  Future<int> getScansCount() async {
+    final db = await instance.database;
+    final result =
+        await db.rawQuery('SELECT COUNT(*) as count FROM history_scans');
+    return Sqflite.firstIntValue(result) ?? 0;
   }
 
   /// ------------------ CLEAR & CLOSE ------------------
