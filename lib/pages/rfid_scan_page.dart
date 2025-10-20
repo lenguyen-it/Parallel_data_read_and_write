@@ -15,21 +15,21 @@ class RfidScanPage extends StatefulWidget {
 class _RfidScanPageState extends State<RfidScanPage> {
   final RfidScanService _scanService = RfidScanService();
   List<Map<String, dynamic>> _localData = [];
-  StreamSubscription<Map<String, dynamic>>? _subscription;
+
+  StreamSubscription<Map<String, dynamic>>? _tagSubscription;
   StreamSubscription<Map<String, dynamic>>? _syncSubscription;
-  StreamSubscription<Map<String, dynamic>>? _uiUpdateSubscription;
+  StreamSubscription<int>? _dbCountSubscription;
+
+  Timer? _speedUpdateTimer;
   Timer? _autoRefreshTimer;
 
   bool _isLoading = false;
   bool _isScanning = false;
 
-  // ignore: unused_field
-  Map<String, dynamic>? _lastTagData;
+  int _currentDbCount = 0;
+  int _lastSyncSpeed = 0;
 
-  // Lưu timestamp của các lần quét trong 1 giây
   final List<DateTime> _scanTimestamps = [];
-
-  // Lưu timestamp của các lần đồng bộ trong 1 giây
   final List<DateTime> _syncTimestamps = [];
 
   int get _scansInLastSecond {
@@ -57,42 +57,66 @@ class _RfidScanPageState extends State<RfidScanPage> {
     _scanService.attachTagStream();
     await _loadLocal();
 
-    _subscription = _scanService.tagStream.listen((data) {
-      setState(() {
-        _lastTagData = data;
-        _scanTimestamps.add(DateTime.now());
-      });
+    // ✅ Chỉ track scan speed, KHÔNG load data
+    _tagSubscription = _scanService.tagStream.listen((data) {
+      if (mounted) {
+        setState(() {
+          _scanTimestamps.add(DateTime.now());
+        });
+      }
     });
 
-    _uiUpdateSubscription = _scanService.uiUpdateStream.listen((data) async {
-      await _loadLocal();
-    });
-
+    // ✅ Chỉ track sync speed, KHÔNG load data
     _syncSubscription = _scanService.syncStream.listen((data) {
-      setState(() {
-        _syncTimestamps.add(DateTime.now());
-      });
-      _loadLocal();
+      if (mounted) {
+        setState(() {
+          _syncTimestamps.add(DateTime.now());
+        });
+      }
     });
 
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+    // ✅ Listen DB count stream (chỉ update khi có batch mới)
+    _dbCountSubscription = _scanService.dbCountStream.listen((count) {
+      if (mounted && count != _currentDbCount) {
+        setState(() {
+          _currentDbCount = count;
+        });
+        _loadLocal(); // Chỉ load khi có thay đổi thực sự
+      }
+    });
+
+    // ✅ Update tốc độ sync mỗi 500ms
+    _speedUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      final currentSpeed = _syncsInLastSecond;
+      if (mounted && currentSpeed != _lastSyncSpeed) {
+        setState(() {
+          _lastSyncSpeed = currentSpeed;
+        });
+      }
+    });
+
+    // ✅ Auto refresh mỗi 3s (để catch missed updates)
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       await _loadLocal();
-      if (mounted) setState(() {});
     });
   }
 
   Future<void> _loadLocal() async {
     final data = await HistoryDatabase.instance.getAllScans();
     if (mounted) {
-      setState(() => _localData = data);
+      setState(() {
+        _localData = data;
+        _currentDbCount = data.length;
+      });
     }
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    _tagSubscription?.cancel();
     _syncSubscription?.cancel();
-    _uiUpdateSubscription?.cancel();
+    _dbCountSubscription?.cancel();
+    _speedUpdateTimer?.cancel();
     _autoRefreshTimer?.cancel();
     _scanService.dispose();
     super.dispose();
@@ -120,14 +144,27 @@ class _RfidScanPageState extends State<RfidScanPage> {
   }
 
   void _handleStopScan() async {
-    await RfidScanService().stopScan();
+    await _scanService.stopScan();
+
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    await _loadLocal();
+
     setState(() => _isScanning = false);
+
+    // if (mounted) {
+    //   ScaffoldMessenger.of(context).showSnackBar(
+    //     const SnackBar(content: Text('✅ Đã dừng và lưu tất cả dữ liệu')),
+    //   );
+    // }
   }
 
-  /// 🔹 Hiển thị dialog xem dữ liệu file tạm
   Future<void> _showTempFileDialog() async {
     try {
-      final tempData = await TempStorageService().readAllTempData();
+      final tempData = List<Map<String, dynamic>>.from(
+        await TempStorageService().readAllTempData(),
+      ).reversed.toList();
+
       final count = tempData.length;
       final filePath = await TempStorageService().getTempFilePath();
 
@@ -176,9 +213,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                 const Divider(height: 20),
                 Expanded(
                   child: tempData.isEmpty
-                      ? const Center(
-                          child: Text('File tạm trống'),
-                        )
+                      ? const Center(child: Text('File tạm trống'))
                       : ListView.builder(
                           itemCount: tempData.length,
                           itemBuilder: (context, index) {
@@ -197,7 +232,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                                   ),
                                 ),
                                 subtitle: Text(
-                                  'Timestamp: ${item['timestamp'] ?? 'N/A'}',
+                                  'Status: ${item['sync_status'] ?? 'N/A'}',
                                   style: const TextStyle(fontSize: 11),
                                 ),
                                 children: [
@@ -266,9 +301,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                           if (!mounted) return;
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Đã xóa file tạm'),
-                            ),
+                            const SnackBar(content: Text('Đã xóa file tạm')),
                           );
                         }
                       },
@@ -294,42 +327,20 @@ class _RfidScanPageState extends State<RfidScanPage> {
     }
   }
 
-  /// 🔹 Danh sách dữ liệu đã quét
   Widget _buildScannedList() {
     if (_localData.isEmpty) {
       return const Center(child: Text('Chưa có dữ liệu'));
     }
-
-    final statusMap = {
-      'pending': 'Đang chờ',
-      'synced': 'Đã đồng bộ',
-      'failed': 'Chưa đồng bộ',
-    };
 
     return ListView.builder(
       itemCount: _localData.length,
       itemBuilder: (context, i) {
         final item = _localData[i];
         final code = item['epc'] ?? '---';
-        final status = item['status'] ?? 'pending';
-        final statusText = statusMap[status] ?? status;
         final scanDuration = item['scan_duration_ms'];
-
-        // Color bgColor;
-        // switch (status) {
-        //   case 'synced':
-        //     bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
-        //     break;
-        //   case 'failed':
-        //     bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
-        //     break;
-        //   default:
-        //     bgColor = const Color(0xFFFFF8E1); // cam nhạt
-        // }
 
         return Container(
           height: 80,
-          // color: bgColor,
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: Colors.black12)),
           ),
@@ -341,16 +352,6 @@ class _RfidScanPageState extends State<RfidScanPage> {
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Text(
-                //   'Trạng thái: $statusText',
-                //   style: TextStyle(
-                //     fontSize: 12,
-                //     color: status == 'synced'
-                //         ? Colors.green
-                //         : (status == 'failed' ? Colors.red : Colors.orange),
-                //   ),
-                // ),
-                //if (scanDuration != null)
                 if (scanDuration != null)
                   Text(
                     'Tốc độ quét: ${scanDuration.toStringAsFixed(2)}ms/mã',
@@ -364,7 +365,6 @@ class _RfidScanPageState extends State<RfidScanPage> {
     );
   }
 
-  /// 🔹 Danh sách dữ liệu đồng bộ
   Widget _buildSyncedList() {
     if (_localData.isEmpty) {
       return const Center(child: Text('Không có dữ liệu đồng bộ'));
@@ -388,13 +388,13 @@ class _RfidScanPageState extends State<RfidScanPage> {
         Color bgColor;
         switch (status) {
           case 'synced':
-            bgColor = const Color(0xFFE8F5E9); // xanh lá nhạt
+            bgColor = const Color(0xFFE8F5E9);
             break;
           case 'failed':
-            bgColor = const Color(0xFFFFEBEE); // đỏ nhạt
+            bgColor = const Color(0xFFFFEBEE);
             break;
           default:
-            bgColor = const Color(0xFFFFF8E1); // cam nhạt
+            bgColor = const Color(0xFFFFF8E1);
         }
 
         return Container(
@@ -444,53 +444,49 @@ class _RfidScanPageState extends State<RfidScanPage> {
       ),
       body: Column(
         children: [
-          // ----------- Điều khiển -----------
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  ElevatedButton(
-                    onPressed: _isLoading ? null : _handleSingleScan,
-                    child: const Text('Quét 1 lần'),
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _handleSingleScan,
+                  child: const Text('Quét 1 lần'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _isScanning ? Colors.grey : Colors.green,
                   ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _isScanning ? Colors.grey : Colors.green,
-                    ),
-                    onPressed: _isScanning ? null : _handleContinuousScan,
-                    child: const Text('Quét liên tục'),
+                  onPressed: _isScanning ? null : _handleContinuousScan,
+                  child: const Text('Quét liên tục'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _isScanning ? Colors.red : Colors.grey,
                   ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _isScanning ? Colors.red : Colors.grey,
-                    ),
-                    onPressed: _isScanning ? _handleStopScan : null,
-                    child: const Text('Dừng'),
+                  onPressed: _isScanning ? _handleStopScan : null,
+                  child: const Text('Dừng'),
+                ),
+                ElevatedButton(
+                  onPressed: _loadLocal,
+                  child: const Text('Tải lại'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.lightGreen,
                   ),
-                  ElevatedButton(
-                    onPressed: _loadLocal,
-                    child: const Text('Tải lại'),
-                  ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.lightGreen,
-                    ),
-                    onPressed: _showTempFileDialog,
-                    child: const Text('Xem file tạm'),
-                  ),
-                ]),
+                  onPressed: _showTempFileDialog,
+                  child: const Text('Xem file tạm'),
+                ),
+              ],
+            ),
           ),
-
           const Divider(height: 1),
-
-          // ----------- Hai cột dữ liệu -----------
           Expanded(
             child: Row(
               children: [
-                // ===== CỘT BÊN TRÁI: DỮ LIỆU ĐÃ QUÉT =====
                 Expanded(
                   child: Column(
                     children: [
@@ -513,7 +509,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                               ),
                             ),
                             Text(
-                              '(${_localData.length})',
+                              '($_currentDbCount)',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.blueGrey,
@@ -534,10 +530,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
                     ],
                   ),
                 ),
-
                 const VerticalDivider(width: 1),
-
-                // ===== CỘT BÊN PHẢI: DỮ LIỆU ĐỒNG BỘ =====
                 Expanded(
                   child: Column(
                     children: [
@@ -560,14 +553,14 @@ class _RfidScanPageState extends State<RfidScanPage> {
                               ),
                             ),
                             Text(
-                              '(${_localData.where((e) => e['status'] == 'synced').length}/${_localData.length})',
+                              '(${_localData.where((e) => e['status'] == 'synced').length}/$_currentDbCount)',
                               style: const TextStyle(
                                 fontSize: 13,
                                 color: Colors.green,
                               ),
                             ),
                             Text(
-                              'Tốc độ: $_syncsInLastSecond mã/giây',
+                              'Tốc độ: $_lastSyncSpeed mã/giây',
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,

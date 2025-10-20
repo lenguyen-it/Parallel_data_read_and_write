@@ -4,15 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:paralled_data/database/history_database.dart';
 import 'package:paralled_data/plugin/rfid_c72_plugin.dart';
+import 'package:paralled_data/services/temp_storage_service.dart';
 
 class RfidScanService {
-  /// ------------------ TRẠNG THÁI ------------------
   bool isConnected = false;
   bool isConnecting = false;
   bool isScanning = false;
   bool isContinuousMode = false;
 
-  /// ------------------ STREAM ------------------
   final StreamController<Map<String, dynamic>> _tagController =
       StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get tagStream => _tagController.stream;
@@ -21,18 +20,13 @@ class RfidScanService {
       StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get syncStream => _syncController.stream;
 
-  /// ------------------ UI REAL-TIME STREAM ------------------
-  final StreamController<Map<String, dynamic>> _uiUpdateController =
-      StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get uiUpdateStream => _uiUpdateController.stream;
+  final StreamController<int> _dbCountController =
+      StreamController<int>.broadcast();
+  Stream<int> get dbCountStream => _dbCountController.stream;
 
   Timer? _uiUpdateTimer;
-  bool _hasPendingUIUpdate = false;
-  Map<String, dynamic>? _lastScannedData;
 
-  /// ------------------ QUEUE & CONCURRENT ------------------
   final Set<String> _sendingIds = {};
-  // ignore: unused_field
   final Set<String> _recentEpcs = {};
   final List<_QueuedRequest> _requestQueue = [];
   int _activeRequests = 0;
@@ -41,7 +35,6 @@ class RfidScanService {
   final Map<String, int> _retryCounter = {};
   static const String serverUrl = 'http://192.168.15.194:5000/api/scans';
 
-  /// ------------------ BATCH CONFIG ------------------
   static const int batchSize = 25;
   static const Duration batchInterval = Duration(milliseconds: 300);
   final List<Map<String, dynamic>> _pendingBatch = [];
@@ -49,15 +42,17 @@ class RfidScanService {
 
   bool _isFlushingBatch = false;
 
-  //Đếm số
   int totalCount = 0;
   int uniqueCount = 0;
   final Set<String> uniqueEpcs = {};
 
-  /// ------------------ KẾT NỐI ------------------
   final int maxConnectRetry = 3;
   int _currentRetry = 0;
   int retryDelaySeconds = 3;
+
+  final List<_StatusUpdate> _statusUpdateQueue = [];
+  Timer? _statusUpdateTimer;
+  bool _isUpdatingStatus = false;
 
   Future<void> connect() async {
     if (isConnected || isConnecting) return;
@@ -76,7 +71,6 @@ class RfidScanService {
     }
   }
 
-  /// ------------------ QUÉT RFID ------------------
   Future<void> startSingleScan() async {
     if (!isConnected) throw Exception('Chưa kết nối thiết bị');
     isScanning = true;
@@ -110,18 +104,29 @@ class RfidScanService {
       _batchTimer = null;
       _uiUpdateTimer?.cancel();
       _uiUpdateTimer = null;
+      _statusUpdateTimer?.cancel();
+      _statusUpdateTimer = null;
 
       await RfidC72Plugin.stopScan;
       isScanning = false;
       isContinuousMode = false;
 
-      await _flushBatch(force: true);
+      if (_pendingBatch.isNotEmpty) {
+        await _flushBatch(force: true);
+      }
+
+      if (_statusUpdateQueue.isNotEmpty) {
+        await _processBatchStatusUpdate();
+      }
+
+      await TempStorageService().flushQueue();
+
+      debugPrint('✅ Stop scan hoàn tất');
     } catch (e) {
       debugPrint('Stop scan error: $e');
     }
   }
 
-  /// ------------------ ATTACH STREAM ------------------
   void attachTagStream() {
     RfidC72Plugin.tagsStatusStream.receiveBroadcastStream().listen(
       (event) async {
@@ -151,10 +156,6 @@ class RfidScanService {
         debugPrint('Tổng: $totalCount | Duy nhất: $uniqueCount');
 
         _tagController.add(data);
-
-        _lastScannedData = data;
-        _scheduleUIUpdate();
-
         _addToBatch(data);
       },
       onError: (err) {
@@ -163,26 +164,9 @@ class RfidScanService {
     );
   }
 
-  /// ------------------ UI UPDATE với THROTTLE ------------------
-  void _scheduleUIUpdate() {
-    if (_hasPendingUIUpdate) return;
-
-    _hasPendingUIUpdate = true;
-    _uiUpdateTimer?.cancel();
-
-    _uiUpdateTimer = Timer(const Duration(milliseconds: 500), () {
-      if (_lastScannedData != null) {
-        _uiUpdateController.add(_lastScannedData!);
-        _lastScannedData = null;
-      }
-      _hasPendingUIUpdate = false;
-    });
-  }
-
-  /// ------------------ BATCH BUFFER ------------------
   void _addToBatch(Map<String, dynamic> data) {
     _pendingBatch.add({
-      'barcode': data['epc_ascii'] ?? '',
+      'epc': data['epc_ascii'] ?? '',
       'scan_duration_ms': data['scan_duration_ms'],
       'epc_hex': data['epc_hex'],
       'tid_hex': data['tid_hex'],
@@ -192,41 +176,56 @@ class RfidScanService {
     });
 
     if (_pendingBatch.length >= batchSize) {
-      unawaited(_flushBatch());
+      _scheduleFlush();
       return;
     }
 
     _batchTimer?.cancel();
-    _batchTimer = Timer(batchInterval, () => _flushBatch());
+    _batchTimer = Timer(batchInterval, () => _scheduleFlush());
   }
 
-  /// ------------------ GOM BATCH & FLUSH ------------------
+  Future<void> _scheduleFlush({bool force = false}) async {
+    if (!force && _pendingBatch.isEmpty) return;
+    if (_isFlushingBatch) return;
+
+    await _flushBatch(force: force);
+  }
+
   Future<void> _flushBatch({bool force = false}) async {
-    if (!force && (_isFlushingBatch || _pendingBatch.isEmpty)) {
-      return;
-    }
-
-    if (_pendingBatch.isEmpty) {
-      debugPrint('⚠️ Không có batch để flush.');
-      return;
-    }
-
+    if (_isFlushingBatch) return;
     _isFlushingBatch = true;
 
     try {
-      final batch = List<Map<String, dynamic>>.from(_pendingBatch);
-      _pendingBatch.clear();
-      _batchTimer?.cancel();
-      _batchTimer = null;
+      while (_pendingBatch.isNotEmpty) {
+        final batch = List<Map<String, dynamic>>.from(_pendingBatch);
+        _pendingBatch.clear();
+        _batchTimer?.cancel();
+        _batchTimer = null;
 
-      final ids = await HistoryDatabase.instance.batchInsertScans(batch);
-      if (ids.isEmpty) {
-        debugPrint('⚠️ Không insert được batch.');
-        return;
-      }
+        final ids = await HistoryDatabase.instance.batchInsertScans(batch);
+        if (ids.isEmpty) {
+          continue;
+        }
 
-      for (int i = 0; i < batch.length; i++) {
-        unawaited(_sendToServer(batch[i], ids[i]));
+        final List<Map<String, dynamic>> items = [];
+        for (int i = 0; i < batch.length; i++) {
+          items.add({
+            'id_local': ids[i],
+            'sync_status': 'pending',
+            ...batch[i],
+          });
+        }
+
+        await TempStorageService().appendBatch(items);
+
+        final newCount = await HistoryDatabase.instance.getScansCount();
+        _dbCountController.add(newCount);
+
+        for (int i = 0; i < batch.length; i++) {
+          unawaited(_sendToServer(batch[i], ids[i]));
+        }
+
+        debugPrint('Total DB: $newCount');
       }
     } catch (e, st) {
       debugPrint('❌ Lỗi khi flush batch: $e\n$st');
@@ -235,17 +234,10 @@ class RfidScanService {
     }
   }
 
-  /// ------------------ GỬI SERVER SONG SONG ------------------
   Future<void> _sendToServer(Map<String, dynamic> data, String idLocal) async {
-    final epc = data['barcode'] ?? '';
+    final epc = data['epc'] ?? '';
 
-    final bool isRetryCall = _retryCounter.containsKey(idLocal);
-
-    if (!isRetryCall &&
-        (_sendingIds.contains(idLocal) ||
-            _requestQueue.any((r) => r.idLocal == idLocal))) {
-      return;
-    }
+    if (_sendingIds.contains(idLocal)) return;
 
     _sendingIds.add(idLocal);
     _activeRequests++;
@@ -254,7 +246,7 @@ class RfidScanService {
     final Stopwatch stopwatch = Stopwatch()..start();
 
     final body = {
-      'barcode': epc,
+      'epc': epc,
       'epc_hex': data['epc_hex'],
       'tid_hex': data['tid_hex'],
       'user_hex': data['user_hex'],
@@ -269,22 +261,24 @@ class RfidScanService {
           .post(Uri.parse(serverUrl),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode(body))
-          .timeout(const Duration(seconds: 1));
+          .timeout(const Duration(seconds: 3));
 
       stopwatch.stop();
       final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        await HistoryDatabase.instance.updateStatusById(
-          idLocal,
-          'synced',
+        _addStatusUpdate(
+          idLocal: idLocal,
+          status: 'synced',
           syncDurationMs: syncDurationMs,
         );
-        _syncController
-            .add({'id': idLocal, 'scan_duration_ms': syncDurationMs});
+
+        _syncController.add({
+          'id': idLocal,
+          'sync_duration_ms': syncDurationMs,
+          'status': 'synced',
+        });
       } else {
-        debugPrint(
-            '🔁 [$idLocal] Server error ${response.statusCode}, retrying...');
         await _handleRetryFail(
             idLocal, data, 'Server error ${response.statusCode}');
       }
@@ -302,27 +296,119 @@ class RfidScanService {
     }
   }
 
+  void _addStatusUpdate({
+    required String idLocal,
+    required String status,
+    double? syncDurationMs,
+    String? error,
+  }) {
+    _statusUpdateQueue.add(_StatusUpdate(
+      idLocal: idLocal,
+      status: status,
+      syncDurationMs: syncDurationMs,
+      error: error,
+    ));
+
+    // Schedule batch update
+    _statusUpdateTimer?.cancel();
+    _statusUpdateTimer = Timer(const Duration(milliseconds: 100), () {
+      _processBatchStatusUpdate();
+    });
+  }
+
+  Future<void> _processBatchStatusUpdate() async {
+    if (_isUpdatingStatus || _statusUpdateQueue.isEmpty) return;
+
+    _isUpdatingStatus = true;
+
+    try {
+      final updates = List<_StatusUpdate>.from(_statusUpdateQueue);
+      _statusUpdateQueue.clear();
+
+      // Update DB với transaction
+      await HistoryDatabase.instance.batchUpdateStatus(updates);
+
+      // Update file tạm
+      for (final update in updates) {
+        await TempStorageService().updateSyncStatus(
+          idLocal: update.idLocal,
+          syncStatus: update.status,
+          syncDurationMs: update.syncDurationMs,
+          syncError: update.error,
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Lỗi batch update status: $e');
+    } finally {
+      _isUpdatingStatus = false;
+
+      // Nếu còn trong queue, xử lý tiếp
+      if (_statusUpdateQueue.isNotEmpty) {
+        unawaited(_processBatchStatusUpdate());
+      }
+    }
+  }
+
+  // Future<void> _handleRetryFail(
+  //     String idLocal, Map<String, dynamic> data, String error) async {
+  //   _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
+  //   final retryCount = _retryCounter[idLocal]!;
+
+  //   if (retryCount >= 1) {
+  //     _addStatusUpdate(
+  //       idLocal: idLocal,
+  //       status: 'failed',
+  //       error: error,
+  //     );
+
+  //     _syncController.add({
+  //       'id': idLocal,
+  //       'status': 'failed',
+  //     });
+
+  //     _retryCounter.remove(idLocal);
+  //   } else {
+  //     await Future.delayed(const Duration(milliseconds: 500));
+  //     unawaited(_sendToServer(data, idLocal));
+  //   }
+  // }
+
   Future<void> _handleRetryFail(
       String idLocal, Map<String, dynamic> data, String error) async {
     _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
     final retryCount = _retryCounter[idLocal]!;
 
-    if (retryCount > 3) {
-      await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
-      _syncController.add({'id': idLocal, 'status': 'failed'});
-      _retryCounter.remove(idLocal);
-    } else {
+    if (retryCount <= 1) {
+      // Đợi 0.5s rồi gửi lại
       await Future.delayed(const Duration(milliseconds: 500));
-      unawaited(_sendToServer(data, idLocal));
+      // unawaited(_sendToServer(data, idLocal));
+      Future.microtask(() => _sendToServer(data, idLocal));
+
+      return;
     }
+
+    _addStatusUpdate(
+      idLocal: idLocal,
+      status: 'failed',
+      error: error,
+    );
+
+    _syncController.add({
+      'id': idLocal,
+      'status': 'failed',
+    });
+
+    _retryCounter.remove(idLocal);
   }
 
   void dispose() {
     _tagController.close();
     _syncController.close();
-    _uiUpdateController.close();
+    _dbCountController.close();
     _batchTimer?.cancel();
     _uiUpdateTimer?.cancel();
+    _statusUpdateTimer?.cancel();
+    TempStorageService().clearTempFile();
     RfidC72Plugin.stopScan;
   }
 }
@@ -331,4 +417,18 @@ class _QueuedRequest {
   final Map<String, dynamic> data;
   final String idLocal;
   _QueuedRequest(this.data, this.idLocal);
+}
+
+class _StatusUpdate {
+  final String idLocal;
+  final String status;
+  final double? syncDurationMs;
+  final String? error;
+
+  _StatusUpdate({
+    required this.idLocal,
+    required this.status,
+    this.syncDurationMs,
+    this.error,
+  });
 }
