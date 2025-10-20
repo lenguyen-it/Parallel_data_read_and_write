@@ -27,7 +27,7 @@ class RfidScanService {
   Timer? _uiUpdateTimer;
 
   final Set<String> _sendingIds = {};
-  final Set<String> _recentEpcs = {};
+  // final Set<String> _recentEpcs = {};
   final List<_QueuedRequest> _requestQueue = [];
   int _activeRequests = 0;
   static const int maxConcurrentRequests = 3;
@@ -348,30 +348,6 @@ class RfidScanService {
       }
     }
   }
-
-  // Future<void> _handleRetryFail(
-  //     String idLocal, Map<String, dynamic> data, String error) async {
-  //   _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
-  //   final retryCount = _retryCounter[idLocal]!;
-
-  //   if (retryCount >= 1) {
-  //     _addStatusUpdate(
-  //       idLocal: idLocal,
-  //       status: 'failed',
-  //       error: error,
-  //     );
-
-  //     _syncController.add({
-  //       'id': idLocal,
-  //       'status': 'failed',
-  //     });
-
-  //     _retryCounter.remove(idLocal);
-  //   } else {
-  //     await Future.delayed(const Duration(milliseconds: 500));
-  //     unawaited(_sendToServer(data, idLocal));
-  //   }
-  // }
 
   Future<void> _handleRetryFail(
       String idLocal, Map<String, dynamic> data, String error) async {
