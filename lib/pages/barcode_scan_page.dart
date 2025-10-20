@@ -16,6 +16,7 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
   StreamSubscription<String>? _subscription;
   Timer? _autoRefreshTimer;
   bool _isLoading = false;
+  String? _latestRawCode;
 
   @override
   void initState() {
@@ -29,7 +30,15 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     await _loadLocal();
 
     // Cập nhật khi có barcode mới
-    _subscription = _scanService.codeStream.listen((_) async {
+    // _subscription = _scanService.codeStream.listen((_) async {
+    //   await _loadLocal();
+    // });
+
+    _subscription = _scanService.codeStream.listen((rawCode) async {
+      setState(() {
+        // thêm một biến mới để hiển thị mã gốc tạm thời
+        _latestRawCode = rawCode;
+      });
       await _loadLocal();
     });
 
@@ -74,6 +83,51 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
 
   Future<void> _handleStopScan() async {
     await _scanService.stopScan();
+  }
+
+  Widget _buildScannedLastest() {
+    if (_localData.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8.0),
+        child: Center(
+          child: Text('Chưa có dữ liệu'),
+        ),
+      );
+    }
+
+    // final latest = _localData.first;
+
+    final latestCode = _latestRawCode ??
+        (_localData.isNotEmpty ? _localData.first['epc'] : '---');
+
+    return Container(
+      width: double.infinity,
+      color: Colors.blue.shade50,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      margin: const EdgeInsets.only(top: 6, bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'QRcode mới nhất',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.blue,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Mã: $latestCode',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 📱 Dữ liệu đã quét
@@ -197,6 +251,8 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
               ],
             ),
           ),
+
+          _buildScannedLastest(),
 
           const Divider(height: 1),
 

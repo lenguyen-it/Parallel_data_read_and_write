@@ -36,7 +36,7 @@ class BarcodeScanService {
 
           final normalized = _normalizeCode(code);
           lastCode = normalized;
-          _codeController.add(normalized);
+          _codeController.add(code);
           debugPrint('[BARCODE] event: $normalized');
 
           final idLocal = await HistoryDatabase.instance.insertScan(
