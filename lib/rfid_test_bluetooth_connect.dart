@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:paralled_data/services/temp_storage_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:paralled_data/database/history_database.dart';
 import 'package:paralled_data/plugin/rfid_bluetooth_plugin.dart';
@@ -69,7 +70,7 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   bool _isSyncing = false;
 
   static const String serverUrl = 'http://192.168.15.194:5000/api/scans';
-  static const int maxRetryAttempts = 3;
+  static const int maxRetryAttempts = 2;
 
   //==================================================================
   final List<DateTime> _scanTimestamps = [];
@@ -105,6 +106,40 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     _initializeListeners();
     _startSyncWorker();
     _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    // Hủy subscriptions
+    _scanSubscription?.cancel();
+    _rfidSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    _configSubscription?.cancel();
+    _bluetoothStateSubscription?.cancel();
+
+    // Hủy timers
+    _syncTimer?.cancel();
+    _autoRefreshTimer?.cancel();
+    _batchTimer?.cancel();
+    _uiUpdateTimer?.cancel();
+
+    // Xóa file tạm
+    unawaited(_cleanupTempFile());
+
+    super.dispose();
+  }
+
+  Future<void> _cleanupTempFile() async {
+    try {
+      if (_pendingBatch.isNotEmpty) {
+        await _flushBatch(force: true);
+      }
+      await TempStorageService().flushQueue();
+      await TempStorageService().clearTempFile();
+      debugPrint('✅ Đã xóa file tạm');
+    } catch (e) {
+      debugPrint('❌ Lỗi cleanup: $e');
+    }
   }
 
   Future<void> _checkExistingConnection() async {
@@ -299,11 +334,25 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
       _batchTimer?.cancel();
       _batchTimer = null;
 
+      final stopwatch = Stopwatch()..start();
       final ids = await HistoryDatabase.instance.batchInsertScans(batch);
+      debugPrint(
+          '✅ Inserted ${ids.length} items in ${stopwatch.elapsedMilliseconds}ms');
       if (ids.isEmpty) {
-        debugPrint('⚠️ Không insert được batch.');
+        debugPrint('⚠️ Insert failed for batch: $batch');
         return;
       }
+
+      final List<Map<String, dynamic>> items = [];
+      for (int i = 0; i < batch.length; i++) {
+        items.add({
+          'id_local': ids[i],
+          'sync_status': 'pending',
+          ...batch[i],
+        });
+      }
+
+      await TempStorageService().appendBatch(items);
 
       for (int i = 0; i < batch.length; i++) {
         unawaited(_sendToServer(batch[i], ids[i]));
@@ -435,6 +484,13 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           'synced',
           syncDurationMs: syncDurationMs,
         );
+
+        await TempStorageService().updateSyncStatus(
+          idLocal: idLocal,
+          syncStatus: 'synced',
+          syncDurationMs: syncDurationMs,
+        );
+
         _retryCounter.remove(idLocal);
       } else {
         await _handleRetryFail(
@@ -461,6 +517,13 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
 
     if (retryCount >= maxRetryAttempts) {
       await HistoryDatabase.instance.updateStatusById(idLocal, 'failed');
+
+      await TempStorageService().updateSyncStatus(
+        idLocal: idLocal,
+        syncStatus: 'failed',
+        syncError: error,
+      );
+
       _retryCounter.remove(idLocal);
       debugPrint('❌ Mã ${data['epc']} đã failed sau $maxRetryAttempts lần thử');
     } else {
@@ -642,6 +705,182 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     );
   }
 
+  //Hiển thị dialog xem dữ liệu file tạm
+  Future<void> _showTempFileDialog() async {
+    await TempStorageService().flushQueue();
+
+    try {
+      final tempData = List<Map<String, dynamic>>.from(
+        await TempStorageService().readAllTempData(),
+      ).reversed.toList();
+
+      final count = tempData.length;
+
+      final filePath = await TempStorageService().getTempFilePath();
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          child: Container(
+            width: MediaQuery.of(context).size.width * 0.9,
+            height: MediaQuery.of(context).size.height * 0.8,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Dữ liệu File Tạm',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tổng số: $count records',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Đường dẫn: $filePath',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const Divider(height: 20),
+                Expanded(
+                  child: tempData.isEmpty
+                      ? const Center(
+                          child: Text('File tạm trống'),
+                        )
+                      : ListView.builder(
+                          itemCount: tempData.length,
+                          itemBuilder: (context, index) {
+                            final item = tempData[index];
+                            final jsonStr = const JsonEncoder.withIndent('  ')
+                                .convert(item);
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: ExpansionTile(
+                                title: Text(
+                                  '${index + 1}. ${item['epc'] ?? 'N/A'}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  'Timestamp: ${item['timestamp_savefile'] ?? 'N/A'}',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    color: Colors.grey.shade100,
+                                    child: SelectableText(
+                                      jsonStr,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final path =
+                            await TempStorageService().downloadTempFile();
+                        if (!mounted) return;
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(path != null
+                                ? 'Đã lưu file: $path'
+                                : 'Lỗi khi lưu file'),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.download, size: 18),
+                      label: const Text('Tải về'),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Xác nhận'),
+                            content: const Text(
+                                'Bạn có chắc muốn xóa toàn bộ dữ liệu file tạm?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Hủy'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text('Xóa'),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        if (confirm == true) {
+                          await TempStorageService().clearTempFile();
+                          if (!mounted) return;
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Đã xóa file tạm'),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.delete, size: 18),
+                      label: const Text('Xóa tất cả'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ Lỗi khi hiển thị file tạm: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lỗi: $e')),
+      );
+    }
+  }
+
   // =================== RFID Section ===================
   Widget _buildRfidSection() {
     return Column(
@@ -680,6 +919,13 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
                 onPressed: _loadLocal,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Tải lại'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.limeAccent,
+                ),
+                onPressed: _showTempFileDialog,
+                child: const Text('Xem file tạm'),
               ),
             ],
           ),
@@ -970,11 +1216,16 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
 
-    await _flushBatch(force: true);
-
     await RfidBlePlugin.stopInventory();
-    if (!mounted) return;
-    setState(() => _isReading = false);
+    _isReading = false;
+
+    // if (!mounted) return;
+    // setState(() => _isReading = false);
+
+    await _flushBatch(force: true);
+    await TempStorageService().flushQueue();
+
+    debugPrint('✅ Dừng scan liên tục hoàn tất');
   }
 
   Future<void> _clearHistory() async {
