@@ -517,72 +517,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
     });
   }
 
-  // =================== UI ===================
-  @override
-  Widget build(BuildContext context) {
-    if (_isCheckingConnection) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('RFID Bluetooth - Đồng bộ'),
-        ),
-        body: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Đang kiểm tra kết nối...'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('RFID Bluetooth - Đồng bộ'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                Icon(
-                  _isBluetoothEnabled
-                      ? Icons.bluetooth
-                      : Icons.bluetooth_disabled,
-                  size: 20,
-                  color: _isBluetoothEnabled ? Colors.blue : Colors.red,
-                ),
-                if (!_isBluetoothEnabled)
-                  TextButton(
-                    onPressed: _enableBluetooth,
-                    child: const Text('Bật', style: TextStyle(fontSize: 12)),
-                  ),
-                if (_isConnected)
-                  Row(
-                    children: [
-                      const SizedBox(width: 8),
-                      const Icon(Icons.battery_charging_full, size: 20),
-                      const SizedBox(width: 4),
-                      Text('$_batteryLevel%'),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildConnectionStatus(),
-          Expanded(
-            child: _showRfidSection ? _buildRfidSection() : _buildDeviceList(),
-          ),
-        ],
-      ),
-    );
-  }
-
   // =================== Connection Status ===================
   Widget _buildConnectionStatus() {
     return Container(
@@ -947,6 +881,72 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
           ),
         );
       },
+    );
+  }
+
+  // =================== UI ===================
+  @override
+  Widget build(BuildContext context) {
+    if (_isCheckingConnection) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('RFID Bluetooth - Đồng bộ'),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Đang kiểm tra kết nối...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('RFID Bluetooth - Đồng bộ'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                Icon(
+                  _isBluetoothEnabled
+                      ? Icons.bluetooth
+                      : Icons.bluetooth_disabled,
+                  size: 20,
+                  color: _isBluetoothEnabled ? Colors.blue : Colors.red,
+                ),
+                if (!_isBluetoothEnabled)
+                  TextButton(
+                    onPressed: _enableBluetooth,
+                    child: const Text('Bật', style: TextStyle(fontSize: 12)),
+                  ),
+                if (_isConnected)
+                  Row(
+                    children: [
+                      const SizedBox(width: 8),
+                      const Icon(Icons.battery_charging_full, size: 20),
+                      const SizedBox(width: 4),
+                      Text('$_batteryLevel%'),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildConnectionStatus(),
+          Expanded(
+            child: _showRfidSection ? _buildRfidSection() : _buildDeviceList(),
+          ),
+        ],
+      ),
     );
   }
 
