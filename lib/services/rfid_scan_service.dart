@@ -107,7 +107,7 @@ class RfidScanService {
       _statusUpdateTimer?.cancel();
       _statusUpdateTimer = null;
 
-      await RfidC72Plugin.stopScan;
+      RfidC72Plugin.stopScan;
       isScanning = false;
       isContinuousMode = false;
 
@@ -363,6 +363,350 @@ class RfidScanService {
       return;
     }
 
+    _addStatusUpdate(
+      idLocal: idLocal,
+      status: 'failed',
+      error: error,
+    );
+
+    _syncController.add({
+      'id': idLocal,
+      'status': 'failed',
+    });
+
+    _retryCounter.remove(idLocal);
+  }
+
+  Future<void> syncRecordsFromTemp() async {
+    try {
+      final records = await TempStorageService().getUnsyncedRecords();
+
+      if (records.isEmpty) {
+        debugPrint('ℹ️ Không có bản ghi để đồng bộ');
+        return;
+      }
+
+      debugPrint(
+          '📤 Bắt đầu đồng bộ ${records.length} bản ghi (pending/failed)');
+
+      final List<Map<String, dynamic>> batch = [];
+      for (var record in records) {
+        batch.add({
+          'epc': record['epc']?.toString() ?? '',
+          'scan_duration_ms': record['scan_duration_ms'],
+          'epc_hex': record['epc_hex'],
+          'tid_hex': record['tid_hex'],
+          'user_hex': record['user_hex'],
+          'rssi': record['rssi'],
+          'count': record['count'],
+        });
+      }
+
+      // Thêm vào database
+      final ids = await HistoryDatabase.instance.batchInsertScans(batch);
+      if (ids.isEmpty) {
+        debugPrint('⚠️ Không thể thêm bản ghi vào database');
+        return;
+      }
+
+      for (int i = 0; i < batch.length; i++) {
+        final idLocal = ids[i];
+        final record = batch[i];
+        final oldIdLocal = records[i]['id_local']?.toString() ?? '';
+
+        // Gửi lên server với ID mới
+        unawaited(_sendToServerWithOldId(record, idLocal, oldIdLocal));
+      }
+
+      debugPrint('✅ Đã gửi ${ids.length} bản ghi để đồng bộ');
+    } catch (e) {
+      debugPrint('❌ Lỗi khi đồng bộ pending records: $e');
+    }
+  }
+
+  /// Gửi lên server và cập nhật cả ID cũ trong file tạm
+  Future<void> _sendToServerWithOldId(
+      Map<String, dynamic> data, String newIdLocal, String oldIdLocal) async {
+    final epc = data['epc'] ?? '';
+
+    if (_sendingIds.contains(newIdLocal)) return;
+
+    _sendingIds.add(newIdLocal);
+    _activeRequests++;
+
+    final DateTime startTime = DateTime.now();
+    final Stopwatch stopwatch = Stopwatch()..start();
+
+    final body = {
+      'epc': epc,
+      'epc_hex': data['epc_hex'],
+      'tid_hex': data['tid_hex'],
+      'user_hex': data['user_hex'],
+      'rssi': data['rssi'],
+      'count': data['count'],
+      'timestamp_device': startTime.toIso8601String(),
+      'status_sync': true,
+    };
+
+    try {
+      final response = await http
+          .post(Uri.parse(serverUrl),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body))
+          .timeout(const Duration(seconds: 3));
+
+      stopwatch.stop();
+      final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        // Cập nhật DB với ID mới
+        _addStatusUpdate(
+          idLocal: newIdLocal,
+          status: 'synced',
+          syncDurationMs: syncDurationMs,
+        );
+
+        await TempStorageService().updateSyncStatus(
+          idLocal: oldIdLocal,
+          syncStatus: 'synced',
+          syncDurationMs: syncDurationMs,
+        );
+
+        _syncController.add({
+          'id': newIdLocal,
+          'sync_duration_ms': syncDurationMs,
+          'status': 'synced',
+        });
+      } else {
+        await _handleRetryFailWithOldId(newIdLocal, oldIdLocal, data,
+            'Server error ${response.statusCode}');
+      }
+    } catch (e) {
+      stopwatch.stop();
+      await _handleRetryFailWithOldId(
+          newIdLocal, oldIdLocal, data, e.toString());
+    } finally {
+      _sendingIds.remove(newIdLocal);
+      _activeRequests--;
+
+      if (_requestQueue.isNotEmpty) {
+        final next = _requestQueue.removeAt(0);
+        unawaited(_sendToServer(next.data, next.idLocal));
+      }
+    }
+  }
+
+  Future<void> _handleRetryFailWithOldId(String newIdLocal, String oldIdLocal,
+      Map<String, dynamic> data, String error) async {
+    _retryCounter[newIdLocal] = (_retryCounter[newIdLocal] ?? 0) + 1;
+    final retryCount = _retryCounter[newIdLocal]!;
+
+    if (retryCount <= 1) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      Future.microtask(
+          () => _sendToServerWithOldId(data, newIdLocal, oldIdLocal));
+      return;
+    }
+
+    // Cập nhật DB
+    _addStatusUpdate(
+      idLocal: newIdLocal,
+      status: 'failed',
+      error: error,
+    );
+
+    await TempStorageService().updateSyncStatus(
+      idLocal: oldIdLocal,
+      syncStatus: 'failed',
+      syncError: error,
+    );
+
+    _syncController.add({
+      'id': newIdLocal,
+      'status': 'failed',
+    });
+
+    _retryCounter.remove(newIdLocal);
+  }
+
+  /// Đồng bộ các bản ghi từ upload 
+  Future<void> syncRecordsFromUpload(List<Map<String, dynamic>> records) async {
+    try {
+      if (records.isEmpty) {
+        debugPrint('ℹ️ Không có bản ghi để đồng bộ');
+        return;
+      }
+
+      // Lọc chỉ lấy pending/failed
+      final unsyncedRecords = records.where((record) {
+        final status = record['sync_status']?.toString() ?? 'pending';
+        return status == 'pending' || status == 'failed';
+      }).toList();
+
+      if (unsyncedRecords.isEmpty) {
+        debugPrint('ℹ️ Tất cả records đã được sync, không cần gửi lại');
+        return;
+      }
+
+      debugPrint(
+          '📤 Bắt đầu đồng bộ ${unsyncedRecords.length} bản ghi (pending/failed)');
+
+      // Chuẩn bị batch để insert vào DB
+      final List<Map<String, dynamic>> batch = [];
+      for (var record in unsyncedRecords) {
+        batch.add({
+          'epc': record['epc']?.toString() ?? '',
+          'scan_duration_ms': record['scan_duration_ms'],
+          'epc_hex': record['epc_hex'],
+          'tid_hex': record['tid_hex'],
+          'user_hex': record['user_hex'],
+          'rssi': record['rssi'],
+          'count': record['count'],
+        });
+      }
+
+      // Thêm vào database
+      final ids = await HistoryDatabase.instance.batchInsertScans(batch);
+      if (ids.isEmpty) {
+        debugPrint('⚠️ Không thể thêm bản ghi vào database');
+        return;
+      }
+
+      // Chuẩn bị để lưu vào file tạm khi sync thành công
+      final List<Map<String, dynamic>> tempFileRecords = [];
+      for (int i = 0; i < batch.length; i++) {
+        tempFileRecords.add({
+          'id_local': ids[i],
+          'sync_status': 'pending', // Ban đầu là pending
+          ...batch[i],
+        });
+      }
+
+      // Gửi lên server
+      for (int i = 0; i < batch.length; i++) {
+        final idLocal = ids[i];
+        final record = batch[i];
+
+        // Gửi với callback để lưu vào file tạm khi thành công
+        unawaited(_sendToServerAndSaveToTemp(record, idLocal));
+      }
+
+      debugPrint('✅ Đã gửi ${ids.length} bản ghi để đồng bộ');
+    } catch (e) {
+      debugPrint('❌ Lỗi khi đồng bộ upload records: $e');
+    }
+  }
+
+  /// Gửi lên server và CHỈ lưu vào file tạm khi thành công
+  Future<void> _sendToServerAndSaveToTemp(
+      Map<String, dynamic> data, String idLocal) async {
+    final epc = data['epc'] ?? '';
+
+    if (_sendingIds.contains(idLocal)) return;
+
+    _sendingIds.add(idLocal);
+    _activeRequests++;
+
+    final DateTime startTime = DateTime.now();
+    final Stopwatch stopwatch = Stopwatch()..start();
+
+    final body = {
+      'epc': epc,
+      'epc_hex': data['epc_hex'],
+      'tid_hex': data['tid_hex'],
+      'user_hex': data['user_hex'],
+      'rssi': data['rssi'],
+      'count': data['count'],
+      'timestamp_device': startTime.toIso8601String(),
+      'status_sync': true,
+    };
+
+    try {
+      final response = await http
+          .post(Uri.parse(serverUrl),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(body))
+          .timeout(const Duration(seconds: 3));
+
+      stopwatch.stop();
+      final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        // ✅ THÀNH CÔNG → Lưu vào file tạm
+        await TempStorageService().appendBatch([
+          {
+            'id_local': idLocal,
+            'epc': epc,
+            'sync_status': 'synced',
+            'scan_duration_ms': data['scan_duration_ms'],
+            'epc_hex': data['epc_hex'],
+            'tid_hex': data['tid_hex'],
+            'user_hex': data['user_hex'],
+            'rssi': data['rssi'],
+            'count': data['count'],
+            'sync_timestamp': DateTime.now().toIso8601String(),
+            'sync_duration_ms': syncDurationMs,
+          }
+        ]);
+
+        // Cập nhật DB
+        _addStatusUpdate(
+          idLocal: idLocal,
+          status: 'synced',
+          syncDurationMs: syncDurationMs,
+        );
+
+        _syncController.add({
+          'id': idLocal,
+          'sync_duration_ms': syncDurationMs,
+          'status': 'synced',
+        });
+      } else {
+        await _handleUploadRetryFail(
+            idLocal, data, 'Server error ${response.statusCode}');
+      }
+    } catch (e) {
+      stopwatch.stop();
+      await _handleUploadRetryFail(idLocal, data, e.toString());
+    } finally {
+      _sendingIds.remove(idLocal);
+      _activeRequests--;
+
+      if (_requestQueue.isNotEmpty) {
+        final next = _requestQueue.removeAt(0);
+        unawaited(_sendToServer(next.data, next.idLocal));
+      }
+    }
+  }
+
+  Future<void> _handleUploadRetryFail(
+      String idLocal, Map<String, dynamic> data, String error) async {
+    _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
+    final retryCount = _retryCounter[idLocal]!;
+
+    if (retryCount <= 1) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      Future.microtask(() => _sendToServerAndSaveToTemp(data, idLocal));
+      return;
+    }
+
+    // ❌ THẤT BẠI → Lưu vào file tạm với status failed
+    await TempStorageService().appendBatch([
+      {
+        'id_local': idLocal,
+        'epc': data['epc'] ?? '',
+        'sync_status': 'failed',
+        'scan_duration_ms': data['scan_duration_ms'],
+        'epc_hex': data['epc_hex'],
+        'tid_hex': data['tid_hex'],
+        'user_hex': data['user_hex'],
+        'rssi': data['rssi'],
+        'count': data['count'],
+        'sync_error': error,
+      }
+    ]);
+
+    // Cập nhật DB
     _addStatusUpdate(
       idLocal: idLocal,
       status: 'failed',

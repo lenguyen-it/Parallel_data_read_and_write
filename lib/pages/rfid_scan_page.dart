@@ -151,12 +151,82 @@ class _RfidScanPageState extends State<RfidScanPage> {
     await _loadLocal();
 
     setState(() => _isScanning = false);
+  }
 
-    // if (mounted) {
-    //   ScaffoldMessenger.of(context).showSnackBar(
-    //     const SnackBar(content: Text('✅ Đã dừng và lưu tất cả dữ liệu')),
-    //   );
-    // }
+  ///TOÀN BỘ FILE UPLOAD VÀO FILE TẠM
+
+  // Future<void> _handleUploadFile() async {
+  //   setState(() => _isLoading = true);
+  //   try {
+  //     // Gọi phương thức import từ TempStorageService
+  //     final result = await TempStorageService().importFileFromDevice();
+
+  //     if (!mounted) return;
+
+  //     if (!result['success']) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text(result['message'])),
+  //       );
+  //       return;
+  //     }
+
+  //     // Đồng bộ các bản ghi pending
+  //     await _scanService.syncRecordsFromTemp();
+
+  //     // Cập nhật UI
+  //     await _loadLocal();
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       SnackBar(content: Text(result['message'])),
+  //     );
+  //   } catch (e) {
+  //     debugPrint('Upload file error: $e');
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text('Lỗi khi nhập file: $e')),
+  //       );
+  //     }
+  //   } finally {
+  //     setState(() => _isLoading = false);
+  //   }
+  // }
+
+  ///CHỈ UPLOAD CÁC RECORDS KHÔNG PHẢI SYNCED
+
+  Future<void> _handleUploadFile() async {
+    setState(() => _isLoading = true);
+    try {
+      final result = await TempStorageService().readFileForUpload();
+
+      if (!mounted) return;
+
+      if (!result['success']) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['message'])),
+        );
+        return;
+      }
+
+      final records = result['records'] as List<Map<String, dynamic>>;
+
+      await _scanService.syncRecordsFromUpload(records);
+
+      // Cập nhật UI
+      await _loadLocal();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result['message'])),
+      );
+    } catch (e) {
+      debugPrint('Upload file error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi khi nhập file: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _showTempFileDialog() async {
@@ -260,16 +330,91 @@ class _RfidScanPageState extends State<RfidScanPage> {
                   children: [
                     ElevatedButton.icon(
                       onPressed: () async {
-                        final path =
-                            await TempStorageService().downloadTempFile();
-                        if (!mounted) return;
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(path != null
-                                ? 'Đã lưu file: $path'
-                                : 'Lỗi khi lưu file'),
-                          ),
+                        String selected = 'json';
+
+                        await showDialog(
+                          context: context,
+                          builder: (context) {
+                            return StatefulBuilder(
+                              builder: (context, setState) {
+                                return AlertDialog(
+                                  title: const Text('Chọn định dạng tải về'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      RadioListTile<String>(
+                                        title: const Text('📄 Tải file JSON'),
+                                        value: 'json',
+                                        groupValue: selected,
+                                        onChanged: (value) =>
+                                            setState(() => selected = value!),
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('📊 Tải file CSV'),
+                                        value: 'csv',
+                                        groupValue: selected,
+                                        onChanged: (value) =>
+                                            setState(() => selected = value!),
+                                      ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Hủy'),
+                                    ),
+                                    ElevatedButton.icon(
+                                      icon:
+                                          const Icon(Icons.download, size: 18),
+                                      label: const Text('Tải về'),
+                                      onPressed: () async {
+                                        String? path;
+                                        String message;
+
+                                        if (selected == 'json') {
+                                          path = await TempStorageService()
+                                              .downloadTempFileJson();
+                                        } else if (selected == 'csv') {
+                                          path = await TempStorageService()
+                                              .downloadTempFileCSV();
+                                        }
+
+                                        if (!context.mounted) return;
+
+                                        if (path != null) {
+                                          message =
+                                              '✅ Đã lưu file ${selected.toUpperCase()}: $path';
+                                        } else {
+                                          message =
+                                              '❌ Lỗi khi lưu file $selected';
+                                        }
+
+                                        await showDialog(
+                                          context: context,
+                                          builder: (context) => AlertDialog(
+                                            title: const Text('Thông báo'),
+                                            content: Text(message),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(context),
+                                                child: const Text('Đóng'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+
+                                        if (context.mounted) {
+                                          Navigator.pop(context);
+                                          Navigator.pop(context);
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+                          },
                         );
                       },
                       icon: const Icon(Icons.download, size: 18),
@@ -479,6 +624,13 @@ class _RfidScanPageState extends State<RfidScanPage> {
                   ),
                   onPressed: _showTempFileDialog,
                   child: const Text('Xem file tạm'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
+                  onPressed: _isLoading ? null : _handleUploadFile,
+                  child: const Text('Upload File'),
                 ),
               ],
             ),
