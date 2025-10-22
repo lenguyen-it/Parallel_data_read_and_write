@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:paralled_data/database/history_database.dart';
-import 'package:paralled_data/services/barcode_scan_service.dart';
+
+import '../database/history_database.dart';
+import '../services/barcode_scan_service.dart';
 
 class BarcodeScanPage extends StatefulWidget {
   const BarcodeScanPage({super.key});
