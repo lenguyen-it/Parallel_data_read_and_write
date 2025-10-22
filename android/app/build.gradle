@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.paralled_data"
-    compileSdk = 34
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
