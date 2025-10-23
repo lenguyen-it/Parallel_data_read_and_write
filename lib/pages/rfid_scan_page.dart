@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:paralled_data/database/history_database.dart';
+import 'package:paralled_data/services/encryption_security_service.dart';
 import 'package:paralled_data/services/rfid_scan_service.dart';
 import 'package:paralled_data/services/temp_storage_service.dart';
 
@@ -14,6 +15,8 @@ class RfidScanPage extends StatefulWidget {
 
 class _RfidScanPageState extends State<RfidScanPage> {
   final RfidScanService _scanService = RfidScanService();
+  final EncryptionSecurityService _encryption = EncryptionSecurityService();
+
   List<Map<String, dynamic>> _localData = [];
 
   StreamSubscription<Map<String, dynamic>>? _tagSubscription;
@@ -25,6 +28,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
 
   bool _isLoading = false;
   bool _isScanning = false;
+  bool _encryptionInitialized = false;
 
   int _currentDbCount = 0;
   int _lastSyncSpeed = 0;
@@ -53,11 +57,18 @@ class _RfidScanPageState extends State<RfidScanPage> {
   }
 
   Future<void> _initSetup() async {
+    if (!_encryption.isInitialized) {
+      await _encryption.initializeEncryption();
+      setState(() {
+        _encryptionInitialized = true;
+      });
+      debugPrint('✅ Encryption đã được khởi tạo');
+    }
+
     await _scanService.connect();
     _scanService.attachTagStream();
     await _loadLocal();
 
-    // ✅ Chỉ track scan speed, KHÔNG load data
     _tagSubscription = _scanService.tagStream.listen((data) {
       if (mounted) {
         setState(() {
@@ -66,7 +77,6 @@ class _RfidScanPageState extends State<RfidScanPage> {
       }
     });
 
-    // ✅ Chỉ track sync speed, KHÔNG load data
     _syncSubscription = _scanService.syncStream.listen((data) {
       if (mounted) {
         setState(() {
@@ -75,17 +85,15 @@ class _RfidScanPageState extends State<RfidScanPage> {
       }
     });
 
-    // ✅ Listen DB count stream (chỉ update khi có batch mới)
     _dbCountSubscription = _scanService.dbCountStream.listen((count) {
       if (mounted && count != _currentDbCount) {
         setState(() {
           _currentDbCount = count;
         });
-        _loadLocal(); // Chỉ load khi có thay đổi thực sự
+        _loadLocal();
       }
     });
 
-    // ✅ Update tốc độ sync mỗi 500ms
     _speedUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       final currentSpeed = _syncsInLastSecond;
       if (mounted && currentSpeed != _lastSyncSpeed) {
@@ -95,7 +103,6 @@ class _RfidScanPageState extends State<RfidScanPage> {
       }
     });
 
-    // ✅ Auto refresh mỗi 3s (để catch missed updates)
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
       await _loadLocal();
     });
@@ -144,54 +151,20 @@ class _RfidScanPageState extends State<RfidScanPage> {
   }
 
   void _handleStopScan() async {
+    if (!_isScanning) return;
+
+    setState(() {
+      _isScanning = false;
+    });
+
     await _scanService.stopScan();
-
     await Future.delayed(const Duration(milliseconds: 500));
-
     await _loadLocal();
 
     setState(() => _isScanning = false);
   }
 
-  ///TOÀN BỘ FILE UPLOAD VÀO FILE TẠM
-
-  // Future<void> _handleUploadFile() async {
-  //   setState(() => _isLoading = true);
-  //   try {
-  //     // Gọi phương thức import từ TempStorageService
-  //     final result = await TempStorageService().importFileFromDevice();
-
-  //     if (!mounted) return;
-
-  //     if (!result['success']) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text(result['message'])),
-  //       );
-  //       return;
-  //     }
-
-  //     // Đồng bộ các bản ghi pending
-  //     await _scanService.syncRecordsFromTemp();
-
-  //     // Cập nhật UI
-  //     await _loadLocal();
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       SnackBar(content: Text(result['message'])),
-  //     );
-  //   } catch (e) {
-  //     debugPrint('Upload file error: $e');
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(content: Text('Lỗi khi nhập file: $e')),
-  //       );
-  //     }
-  //   } finally {
-  //     setState(() => _isLoading = false);
-  //   }
-  // }
-
-  ///CHỈ UPLOAD CÁC RECORDS KHÔNG PHẢI SYNCED
-
+  /// ✅ Upload file (hỗ trợ cả encrypted và plain)
   Future<void> _handleUploadFile() async {
     setState(() => _isLoading = true);
     try {
@@ -207,10 +180,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
       }
 
       final records = result['records'] as List<Map<String, dynamic>>;
-
       await _scanService.syncRecordsFromUpload(records);
-
-      // Cập nhật UI
       await _loadLocal();
 
       if (!mounted) return;
@@ -229,6 +199,7 @@ class _RfidScanPageState extends State<RfidScanPage> {
     }
   }
 
+  /// ✅ Dialog xem file tạm với các tùy chọn mới
   Future<void> _showTempFileDialog() async {
     try {
       final tempData = List<Map<String, dynamic>>.from(
@@ -253,12 +224,42 @@ class _RfidScanPageState extends State<RfidScanPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Dữ liệu File Tạm',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Dữ liệu File Tạm',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Icon(
+                              _encryptionInitialized
+                                  ? Icons.lock
+                                  : Icons.lock_open,
+                              size: 14,
+                              color: _encryptionInitialized
+                                  ? Colors.green
+                                  : Colors.orange,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _encryptionInitialized
+                                  ? 'Đã mã hóa'
+                                  : 'Chưa mã hóa',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _encryptionInitialized
+                                    ? Colors.green
+                                    : Colors.orange,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                     IconButton(
                       icon: const Icon(Icons.close),
@@ -325,100 +326,28 @@ class _RfidScanPageState extends State<RfidScanPage> {
                         ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+
+                // ✅ Nút Export/Download
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
                   children: [
                     ElevatedButton.icon(
-                      onPressed: () async {
-                        String selected = 'json';
-
-                        await showDialog(
-                          context: context,
-                          builder: (context) {
-                            return StatefulBuilder(
-                              builder: (context, setState) {
-                                return AlertDialog(
-                                  title: const Text('Chọn định dạng tải về'),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      RadioListTile<String>(
-                                        title: const Text('📄 Tải file JSON'),
-                                        value: 'json',
-                                        groupValue: selected,
-                                        onChanged: (value) =>
-                                            setState(() => selected = value!),
-                                      ),
-                                      RadioListTile<String>(
-                                        title: const Text('📊 Tải file CSV'),
-                                        value: 'csv',
-                                        groupValue: selected,
-                                        onChanged: (value) =>
-                                            setState(() => selected = value!),
-                                      ),
-                                    ],
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('Hủy'),
-                                    ),
-                                    ElevatedButton.icon(
-                                      icon:
-                                          const Icon(Icons.download, size: 18),
-                                      label: const Text('Tải về'),
-                                      onPressed: () async {
-                                        String? path;
-                                        String message;
-
-                                        if (selected == 'json') {
-                                          path = await TempStorageService()
-                                              .downloadTempFileJson();
-                                        } else if (selected == 'csv') {
-                                          path = await TempStorageService()
-                                              .downloadTempFileCSV();
-                                        }
-
-                                        if (!context.mounted) return;
-
-                                        if (path != null) {
-                                          message =
-                                              '✅ Đã lưu file ${selected.toUpperCase()}: $path';
-                                        } else {
-                                          message =
-                                              '❌ Lỗi khi lưu file $selected';
-                                        }
-
-                                        await showDialog(
-                                          context: context,
-                                          builder: (context) => AlertDialog(
-                                            title: const Text('Thông báo'),
-                                            content: Text(message),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Đóng'),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-
-                                        if (context.mounted) {
-                                          Navigator.pop(context);
-                                          Navigator.pop(context);
-                                        }
-                                      },
-                                    ),
-                                  ],
-                                );
-                              },
-                            );
-                          },
-                        );
-                      },
+                      onPressed: () => _showDownloadOptionsDialog(),
                       icon: const Icon(Icons.download, size: 18),
                       label: const Text('Tải về'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () => _showImportOptionsDialog(),
+                      icon: const Icon(Icons.upload, size: 18),
+                      label: const Text('Import'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                      ),
                     ),
                     ElevatedButton.icon(
                       onPressed: () async {
@@ -469,6 +398,234 @@ class _RfidScanPageState extends State<RfidScanPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Lỗi: $e')),
       );
+    }
+  }
+
+  /// ✅ Dialog chọn định dạng download
+  Future<void> _showDownloadOptionsDialog() async {
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Chọn định dạng tải về'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.lock, color: Colors.green),
+                title: const Text('File mã hóa (.encrypted)'),
+                subtitle: const Text('Bảo mật, cần key để đọc'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _downloadEncrypted();
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.description, color: Colors.blue),
+                title: const Text('File JSON (đã giải mã)'),
+                subtitle: const Text('Dễ đọc, không bảo mật'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _downloadJson();
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.table_chart, color: Colors.orange),
+                title: const Text('File CSV (đã giải mã)'),
+                subtitle: const Text('Excel, không bảo mật'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _downloadCsv();
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// ✅ Download file encrypted
+  Future<void> _downloadEncrypted() async {
+    try {
+      final path = await TempStorageService().downloadEncryptedFile();
+      if (!mounted) return;
+
+      if (path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Đã lưu file mã hóa: $path'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('❌ Lỗi khi lưu file')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Lỗi: $e')),
+      );
+    }
+  }
+
+  /// ✅ Download file JSON (đã giải mã)
+  Future<void> _downloadJson() async {
+    try {
+      final path = await TempStorageService().downloadDecryptedJson();
+      if (!mounted) return;
+
+      if (path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Đã lưu file JSON: $path'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('❌ Lỗi khi lưu file')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Lỗi: $e')),
+      );
+    }
+  }
+
+  /// ✅ Download file CSV (đã giải mã)
+  Future<void> _downloadCsv() async {
+    try {
+      final path = await TempStorageService().downloadDecryptedCSV();
+      if (!mounted) return;
+
+      if (path != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Đã lưu file CSV: $path'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('❌ Lỗi khi lưu file')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Lỗi: $e')),
+      );
+    }
+  }
+
+  /// ✅ Dialog chọn loại import
+  Future<void> _showImportOptionsDialog() async {
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Import file'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.lock, color: Colors.green),
+                title: const Text('Import file mã hóa'),
+                subtitle: const Text('.encrypted'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _importEncrypted();
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.description, color: Colors.blue),
+                title: const Text('Import file thường'),
+                subtitle: const Text('JSON, CSV'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _importPlain();
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// ✅ Import file encrypted
+  Future<void> _importEncrypted() async {
+    setState(() => _isLoading = true);
+    try {
+      final result = await TempStorageService().importEncryptedFile();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result['message'])),
+      );
+
+      if (result['success']) {
+        await _scanService.syncRecordsFromTemp();
+        await _loadLocal();
+      }
+    } catch (e) {
+      debugPrint('Import encrypted error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  /// ✅ Import file plain (JSON/CSV)
+  Future<void> _importPlain() async {
+    setState(() => _isLoading = true);
+    try {
+      final result = await TempStorageService().importPlainFile();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result['message'])),
+      );
+
+      if (result['success']) {
+        await _scanService.syncRecordsFromTemp();
+        await _loadLocal();
+      }
+    } catch (e) {
+      debugPrint('Import plain error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -584,7 +741,17 @@ class _RfidScanPageState extends State<RfidScanPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Đồng bộ dữ liệu RFID'),
+        title: Row(
+          children: [
+            const Text('Đồng bộ dữ liệu RFID'),
+            const SizedBox(width: 8),
+            Icon(
+              _encryptionInitialized ? Icons.lock : Icons.lock_open,
+              size: 18,
+              color: _encryptionInitialized ? Colors.white : Colors.orange,
+            ),
+          ],
+        ),
         backgroundColor: Colors.blue.shade700,
       ),
       body: Column(

@@ -29,6 +29,7 @@ class RfidScanService {
   final Set<String> _sendingIds = {};
   // final Set<String> _recentEpcs = {};
   final List<_QueuedRequest> _requestQueue = [];
+  // ignore: unused_field
   int _activeRequests = 0;
   static const int maxConcurrentRequests = 3;
 
@@ -54,6 +55,7 @@ class RfidScanService {
   Timer? _statusUpdateTimer;
   bool _isUpdatingStatus = false;
 
+  //Kết nối đến thiết bị RFID
   Future<void> connect() async {
     if (isConnected || isConnecting) return;
     isConnecting = true;
@@ -71,6 +73,7 @@ class RfidScanService {
     }
   }
 
+  //Quét một lần
   Future<void> startSingleScan() async {
     if (!isConnected) throw Exception('Chưa kết nối thiết bị');
     isScanning = true;
@@ -83,6 +86,7 @@ class RfidScanService {
     }
   }
 
+  //Quét liên tục
   Future<void> startContinuousScan() async {
     if (!isConnected) throw Exception('Chưa kết nối thiết bị');
     isContinuousMode = true;
@@ -98,6 +102,7 @@ class RfidScanService {
     }
   }
 
+  // Dừng quét
   Future<void> stopScan() async {
     try {
       _batchTimer?.cancel();
@@ -127,6 +132,7 @@ class RfidScanService {
     }
   }
 
+  // Xem các giá trị trả về từ stream khi quét
   void attachTagStream() {
     RfidC72Plugin.tagsStatusStream.receiveBroadcastStream().listen(
       (event) async {
@@ -164,6 +170,7 @@ class RfidScanService {
     );
   }
 
+  //Thêm dữ liệu vào batch chờ xử lý
   void _addToBatch(Map<String, dynamic> data) {
     _pendingBatch.add({
       'epc': data['epc_ascii'] ?? '',
@@ -191,6 +198,7 @@ class RfidScanService {
     await _flushBatch(force: force);
   }
 
+  // Xử lý gửi batch lên server và lưu vào DB
   Future<void> _flushBatch({bool force = false}) async {
     if (_isFlushingBatch) return;
     _isFlushingBatch = true;
@@ -234,6 +242,7 @@ class RfidScanService {
     }
   }
 
+  //Gửi dữ liệu lên server từng mã quét
   Future<void> _sendToServer(Map<String, dynamic> data, String idLocal) async {
     final epc = data['epc'] ?? '';
 
@@ -296,6 +305,7 @@ class RfidScanService {
     }
   }
 
+  // Cập nhật trạng thái (synced/failed) vào hàng đợi
   void _addStatusUpdate({
     required String idLocal,
     required String status,
@@ -309,13 +319,13 @@ class RfidScanService {
       error: error,
     ));
 
-    // Schedule batch update
     _statusUpdateTimer?.cancel();
     _statusUpdateTimer = Timer(const Duration(milliseconds: 100), () {
       _processBatchStatusUpdate();
     });
   }
 
+  // Xử lý cập nhật trạng thái hàng loạt vào DB
   Future<void> _processBatchStatusUpdate() async {
     if (_isUpdatingStatus || _statusUpdateQueue.isEmpty) return;
 
@@ -349,6 +359,7 @@ class RfidScanService {
     }
   }
 
+  // Xử lý khi gửi lên server thất bại
   Future<void> _handleRetryFail(
       String idLocal, Map<String, dynamic> data, String error) async {
     _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
@@ -377,6 +388,7 @@ class RfidScanService {
     _retryCounter.remove(idLocal);
   }
 
+  /// Đồng bộ các bản ghi từ file tạm
   Future<void> syncRecordsFromTemp() async {
     try {
       final records = await TempStorageService().getUnsyncedRecords();
@@ -496,6 +508,7 @@ class RfidScanService {
     }
   }
 
+  /// Xử lý khi gửi lên server thất bại với ID mới và cũ
   Future<void> _handleRetryFailWithOldId(String newIdLocal, String oldIdLocal,
       Map<String, dynamic> data, String error) async {
     _retryCounter[newIdLocal] = (_retryCounter[newIdLocal] ?? 0) + 1;
@@ -529,11 +542,11 @@ class RfidScanService {
     _retryCounter.remove(newIdLocal);
   }
 
-  /// Đồng bộ các bản ghi từ upload 
+  /// Đồng bộ các bản ghi từ file upload
   Future<void> syncRecordsFromUpload(List<Map<String, dynamic>> records) async {
     try {
       if (records.isEmpty) {
-        debugPrint('ℹ️ Không có bản ghi để đồng bộ');
+        debugPrint('Không có bản ghi để đồng bộ');
         return;
       }
 
@@ -544,7 +557,7 @@ class RfidScanService {
       }).toList();
 
       if (unsyncedRecords.isEmpty) {
-        debugPrint('ℹ️ Tất cả records đã được sync, không cần gửi lại');
+        debugPrint('Tất cả records đã được sync, không cần gửi lại');
         return;
       }
 
@@ -577,7 +590,7 @@ class RfidScanService {
       for (int i = 0; i < batch.length; i++) {
         tempFileRecords.add({
           'id_local': ids[i],
-          'sync_status': 'pending', // Ban đầu là pending
+          'sync_status': 'pending',
           ...batch[i],
         });
       }
@@ -632,7 +645,6 @@ class RfidScanService {
       final double syncDurationMs = stopwatch.elapsedMilliseconds.toDouble();
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        // ✅ THÀNH CÔNG → Lưu vào file tạm
         await TempStorageService().appendBatch([
           {
             'id_local': idLocal,
@@ -679,6 +691,7 @@ class RfidScanService {
     }
   }
 
+  /// Xử lý khi gửi lên server thất bại nhưng cho file upload
   Future<void> _handleUploadRetryFail(
       String idLocal, Map<String, dynamic> data, String error) async {
     _retryCounter[idLocal] = (_retryCounter[idLocal] ?? 0) + 1;
@@ -690,7 +703,6 @@ class RfidScanService {
       return;
     }
 
-    // ❌ THẤT BẠI → Lưu vào file tạm với status failed
     await TempStorageService().appendBatch([
       {
         'id_local': idLocal,
