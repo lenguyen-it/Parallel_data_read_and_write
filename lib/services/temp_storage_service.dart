@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:csv/csv.dart';
+import 'package:paralled_data/services/encryption_security_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/foundation.dart';
@@ -12,8 +13,10 @@ class TempStorageService {
   factory TempStorageService() => _instance;
   TempStorageService._internal();
 
-  static const String _fileName = 'rfid_temp_data.json';
+  static const String _fileName = 'rfid_temp_data.encrypted';
   File? _tempFile;
+
+  final EncryptionSecurityService _encryption = EncryptionSecurityService();
 
   bool _isWriting = false;
   final List<Map<String, dynamic>> _writeQueue = [];
@@ -22,11 +25,15 @@ class TempStorageService {
   Future<void> _initTempFile() async {
     if (_tempFile != null) return;
 
+    if (!_encryption.isInitialized) {
+      await _encryption.initializeEncryption();
+    }
+
     Directory tempDir = await getTemporaryDirectory();
     _tempFile = File(path.join(tempDir.path, _fileName));
 
     if (await _tempFile!.exists()) {
-      if (!await _validateJsonFile()) {
+      if (!await _validateEncryptedFile()) {
         debugPrint('⚠️ File tạm bị lỗi, tạo mới...');
         await _tempFile!.delete();
       }
@@ -34,22 +41,25 @@ class TempStorageService {
 
     if (!await _tempFile!.exists()) {
       await _tempFile!.create(recursive: true);
-      await _tempFile!.writeAsString('[]');
-      debugPrint('✅ Đã tạo file tạm mới: ${_tempFile!.path}');
+
+      final encryptedEmpty = _encryption.encryptList([]);
+      await _tempFile!.writeAsString(encryptedEmpty);
+      debugPrint('Đã tạo file tạm mã hóa mới: ${_tempFile!.path}');
     } else {
-      debugPrint('ℹ️ File tạm đã tồn tại: ${_tempFile!.path}');
+      debugPrint('File tạm đã tồn tại: ${_tempFile!.path}');
     }
   }
 
-  /// Kiểm tra file JSON có hợp lệ không
-  Future<bool> _validateJsonFile() async {
+  /// Kiểm tra file encrypted có hợp lệ không
+  Future<bool> _validateEncryptedFile() async {
     try {
       final content = await _tempFile!.readAsString();
       if (content.isEmpty) return true;
-      jsonDecode(content);
+
+      _encryption.decryptList(content);
       return true;
     } catch (e) {
-      debugPrint('❌ File JSON không hợp lệ: $e');
+      debugPrint('❌ File encrypted không hợp lệ: $e');
       return false;
     }
   }
@@ -77,8 +87,10 @@ class TempStorageService {
     await _processWriteQueue();
   }
 
-  /// Thêm batch dữ liệu vào file tạm (cho nhiều items)
-  Future<void> appendBatch(List<Map<String, dynamic>> batchData) async {
+  /// Thêm batch dữ liệu vào file tạm
+  Future<void> appendBatch(
+    List<Map<String, dynamic>> batchData,
+  ) async {
     await _initTempFile();
 
     for (var tagData in batchData) {
@@ -102,24 +114,24 @@ class TempStorageService {
     await _processWriteQueue();
   }
 
-  /// Xử lý queue ghi file (batch write)
+  /// Xử lý queue ghi file
   Future<void> _processWriteQueue() async {
     if (_isWriting || _writeQueue.isEmpty) return;
 
     _isWriting = true;
+    final batch = List<Map<String, dynamic>>.from(_writeQueue);
 
     try {
-      final batch = List<Map<String, dynamic>>.from(_writeQueue);
       _writeQueue.clear();
 
       List<dynamic> currentData = [];
       final content = await _tempFile!.readAsString();
 
-      if (content.isNotEmpty && content != '[]') {
+      if (content.isNotEmpty) {
         try {
-          currentData = jsonDecode(content);
+          currentData = _encryption.decryptList(content);
         } catch (e) {
-          debugPrint('⚠️ Lỗi đọc file, backup và tạo mới: $e');
+          debugPrint('⚠️ Lỗi đọc file encrypted, backup và tạo mới: $e');
           final backupPath = '${_tempFile!.path}.backup';
           await _tempFile!.copy(backupPath);
           currentData = [];
@@ -128,14 +140,15 @@ class TempStorageService {
 
       currentData.addAll(batch);
 
-      final jsonStr = jsonEncode(currentData);
-      await _tempFile!.writeAsString(jsonStr, flush: true);
+      // MÃ HÓA và ghi file
+      final encryptedData = _encryption.encryptList(currentData);
+      await _tempFile!.writeAsString(encryptedData, flush: true);
 
       debugPrint(
-          '✅ Đã lưu ${batch.length} items vào file tạm | Tổng: ${currentData.length}');
+          'Đã lưu ${batch.length} items vào file tạm MÃ HÓA | Tổng: ${currentData.length}');
     } catch (e) {
       debugPrint('❌ Lỗi processWriteQueue: $e');
-      _writeQueue.insertAll(0, _writeQueue);
+      _writeQueue.insertAll(0, batch);
     } finally {
       _isWriting = false;
 
@@ -167,7 +180,7 @@ class TempStorageService {
 
       List<dynamic> currentData;
       try {
-        currentData = jsonDecode(content);
+        currentData = _encryption.decryptList(content);
       } catch (e) {
         debugPrint('⚠️ Lỗi đọc file khi update sync: $e');
         return;
@@ -197,8 +210,9 @@ class TempStorageService {
       }
 
       if (updated) {
-        await _tempFile!.writeAsString(jsonEncode(currentData), flush: true);
-        // debugPrint('✅ Cập nhật sync_status: $idLocal -> $syncStatus');
+        // MÃ HÓA lại và ghi file
+        final encryptedData = _encryption.encryptList(currentData);
+        await _tempFile!.writeAsString(encryptedData, flush: true);
       }
     } catch (e) {
       debugPrint('❌ Lỗi updateSyncStatus: $e');
@@ -217,13 +231,14 @@ class TempStorageService {
 
     try {
       final content = await _tempFile!.readAsString();
-      if (content.isEmpty || content == '[]') {
+      if (content.isEmpty) {
         debugPrint('📋 File tạm rỗng');
         return [];
       }
 
-      final List<dynamic> jsonData = jsonDecode(content);
-      debugPrint('📋 Đọc file tạm: ${jsonData.length} records');
+      //GIẢI MÃ dữ liệu
+      final List<dynamic> jsonData = _encryption.decryptList(content);
+      debugPrint('📋 Đọc file tạm encrypted: ${jsonData.length} records');
       return jsonData;
     } catch (e) {
       debugPrint('❌ Lỗi readAllTempData: $e');
@@ -234,7 +249,7 @@ class TempStorageService {
       if (await backupFile.exists()) {
         try {
           final backupContent = await backupFile.readAsString();
-          final backupData = jsonDecode(backupContent);
+          final backupData = _encryption.decryptList(backupContent);
           debugPrint('✅ Khôi phục từ backup: ${backupData.length} records');
 
           await _tempFile!.writeAsString(backupContent, flush: true);
@@ -248,7 +263,8 @@ class TempStorageService {
     }
   }
 
-  Future<String?> downloadTempFileJson() async {
+  /// ✅ Download file ENCRYPTED về máy
+  Future<String?> downloadEncryptedFile() async {
     await _initTempFile();
 
     while (_isWriting) {
@@ -258,8 +274,8 @@ class TempStorageService {
     try {
       final content = await _tempFile!.readAsString();
 
-      if (content.trim().isEmpty || content.trim() == '[]') {
-        debugPrint('⚠️ Không có dữ liệu để tải JSON');
+      if (content.trim().isEmpty) {
+        debugPrint('⚠️ Không có dữ liệu để tải');
         return null;
       }
 
@@ -283,21 +299,68 @@ class TempStorageService {
 
       final timestamp =
           DateTime.now().toIso8601String().replaceAll(':', '-').split('.')[0];
-      final fileName = 'rfid_backup_$timestamp.json';
+      final fileName = 'rfid_backup_$timestamp.encrypted';
       final targetPath = path.join(targetDir.path, fileName);
 
       final targetFile = await _tempFile!.copy(targetPath);
 
-      debugPrint('✅ Đã tải file về: ${targetFile.path}');
+      debugPrint('✅ Đã tải file ENCRYPTED về: ${targetFile.path}');
       return targetFile.path;
     } catch (e) {
-      debugPrint('❌ Lỗi downloadTempFile: $e');
+      debugPrint('❌ Lỗi downloadEncryptedFile: $e');
       return null;
     }
   }
 
-  /// Xuất file CSV từ dữ liệu tạm
-  Future<String?> downloadTempFileCSV() async {
+  /// Download file JSON ĐÃ GIẢI MÃ
+  Future<String?> downloadDecryptedJson() async {
+    await _initTempFile();
+
+    while (_isWriting) {
+      await Future.delayed(const Duration(milliseconds: 10));
+    }
+
+    try {
+      final data = await readAllTempData();
+
+      if (data.isEmpty) {
+        debugPrint('⚠️ Không có dữ liệu để tải JSON');
+        return null;
+      }
+
+      Directory? targetDir;
+
+      if (Platform.isAndroid) {
+        targetDir = Directory('/storage/emulated/0/Download');
+        if (!await targetDir.exists()) {
+          targetDir = await getExternalStorageDirectory();
+        }
+      } else if (Platform.isIOS) {
+        targetDir = await getApplicationDocumentsDirectory();
+      } else {
+        targetDir = await getDownloadsDirectory();
+      }
+
+      if (targetDir == null) return null;
+
+      final timestamp =
+          DateTime.now().toIso8601String().replaceAll(':', '-').split('.')[0];
+      final fileName = 'rfid_backup_$timestamp.json';
+      final targetPath = path.join(targetDir.path, fileName);
+
+      final jsonStr = jsonEncode(data);
+      await File(targetPath).writeAsString(jsonStr, flush: true);
+
+      debugPrint('✅ Đã tải file JSON (đã giải mã) về: $targetPath');
+      return targetPath;
+    } catch (e) {
+      debugPrint('❌ Lỗi downloadDecryptedJson: $e');
+      return null;
+    }
+  }
+
+  /// Xuất file CSV ĐÃ GIẢI MÃ
+  Future<String?> downloadDecryptedCSV() async {
     await _initTempFile();
     while (_isWriting) {
       await Future.delayed(const Duration(milliseconds: 10));
@@ -384,7 +447,9 @@ class TempStorageService {
 
     _writeQueue.clear();
 
-    await _tempFile!.writeAsString('[]', flush: true);
+    // Mã hóa array rỗng
+    final encryptedEmpty = _encryption.encryptList([]);
+    await _tempFile!.writeAsString(encryptedEmpty, flush: true);
     debugPrint('✅ Đã xóa toàn bộ dữ liệu file tạm');
   }
 
@@ -394,7 +459,7 @@ class TempStorageService {
     return _tempFile!.path;
   }
 
-  /// Force flush queue (gọi khi cần đảm bảo tất cả đã được ghi)
+  /// Force flush queue
   Future<void> flushQueue() async {
     while (_writeQueue.isNotEmpty || _isWriting) {
       await _processWriteQueue();
@@ -402,8 +467,63 @@ class TempStorageService {
     }
   }
 
-  //Import file JSON và csv
-  Future<Map<String, dynamic>> importFileFromDevice() async {
+  /// Import file ENCRYPTED từ device
+  Future<Map<String, dynamic>> importEncryptedFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['encrypted'],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return {
+          'success': false,
+          'message': 'Đã hủy chọn file',
+          'newRecords': [],
+          'stats': {'synced': 0, 'pending': 0, 'failed': 0}
+        };
+      }
+
+      final file = File(result.files.first.path!);
+      final content = await file.readAsString();
+
+      // ✅ GIẢI MÃ file
+      List<dynamic> records = _encryption.decryptList(content);
+
+      if (records.isEmpty) {
+        return {
+          'success': false,
+          'message': 'File không có dữ liệu',
+          'newRecords': [],
+          'stats': {'synced': 0, 'pending': 0, 'failed': 0}
+        };
+      }
+
+      final mergeResult = await _mergeImportedData(
+        List<Map<String, dynamic>>.from(records),
+      );
+
+      return {
+        'success': mergeResult['addedCount'] > 0,
+        'message': 'Import thành công ${mergeResult['addedCount']} record',
+        'recordCount': mergeResult['addedCount'],
+        'newRecords': records,
+        'stats': mergeResult['stats'],
+      };
+    } catch (e) {
+      debugPrint("Lỗi import file encrypted: $e");
+      return {
+        'success': false,
+        'message': 'Lỗi: $e',
+        'newRecords': [],
+        'stats': {'synced': 0, 'pending': 0, 'failed': 0}
+      };
+    }
+  }
+
+  /// Import file JSON/CSV THƯỜNG (không mã hóa)
+  Future<Map<String, dynamic>> importPlainFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -496,9 +616,10 @@ class TempStorageService {
       List<dynamic> currentData = [];
       final content = await _tempFile!.readAsString();
 
-      if (content.isNotEmpty && content != '[]') {
+      if (content.isNotEmpty) {
         try {
-          currentData = jsonDecode(content);
+          // ✅ GIẢI MÃ dữ liệu hiện tại
+          currentData = _encryption.decryptList(content);
         } catch (e) {
           debugPrint('⚠️ Lỗi đọc file hiện tại: $e');
           currentData = [];
@@ -551,10 +672,12 @@ class TempStorageService {
         }
       }
 
-      await _tempFile!.writeAsString(jsonEncode(currentData), flush: true);
+      // ✅ MÃ HÓA và ghi file
+      final encryptedData = _encryption.encryptList(currentData);
+      await _tempFile!.writeAsString(encryptedData, flush: true);
 
       debugPrint(
-          '✅ Import: +$addedCount mới | ⭐ $skippedCount skip (epc empty) | 📊 Tổng: ${currentData.length}');
+          '✅ Import: +$addedCount mới | ⏭ $skippedCount skip (epc empty) | 📊 Tổng: ${currentData.length}');
       debugPrint(
           '📈 Stats: $syncedCount synced | $pendingCount pending | $failedCount failed');
 
@@ -595,12 +718,12 @@ class TempStorageService {
     }
   }
 
-  //Đọc file upload
+  /// Đọc file upload (hỗ trợ cả encrypted và plain)
   Future<Map<String, dynamic>> readFileForUpload() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['json', 'csv'],
+        allowedExtensions: ['json', 'csv', 'encrypted'],
         allowMultiple: false,
       );
 
@@ -618,15 +741,23 @@ class TempStorageService {
 
       List<Map<String, dynamic>> records = [];
 
-      if (extension == 'json') {
+      if (extension == 'encrypted') {
+        final content = await file.readAsString();
+
+        final decryptedData = _encryption.decryptList(content);
+
+        records = List<Map<String, dynamic>>.from(decryptedData);
+      } else if (extension == 'json') {
         final content = await file.readAsString();
         final jsonData = jsonDecode(content);
+
         if (jsonData is List) {
           records = List<Map<String, dynamic>>.from(jsonData);
         }
       } else if (extension == 'csv') {
         final content = await file.readAsString();
         final csvRows = const CsvToListConverter().convert(content);
+
         if (csvRows.isEmpty) {
           return {
             'success': false,
@@ -639,6 +770,7 @@ class TempStorageService {
         final headers = csvRows[0].map((e) => e.toString()).toList();
         records = csvRows.skip(1).map((row) {
           final map = <String, dynamic>{};
+
           for (int i = 0; i < headers.length && i < row.length; i++) {
             map[headers[i]] = row[i];
           }
