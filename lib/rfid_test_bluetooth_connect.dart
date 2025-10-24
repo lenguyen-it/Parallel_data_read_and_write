@@ -1639,7 +1639,10 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
 
         return Container(
           height: 80,
-          color: backgroundColor,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            border: const Border(bottom: BorderSide(color: Colors.black12)),
+          ),
           child: ListTile(
             title: Text(
               item['epc'] ?? '---',
