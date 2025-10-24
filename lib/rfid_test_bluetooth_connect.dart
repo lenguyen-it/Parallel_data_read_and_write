@@ -267,10 +267,6 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
         final epc = (data['epc_ascii']?.toString().trim() ?? '');
         if (epc.isEmpty || !mounted) return;
 
-        final scanDurationMs = (data['scan_duration_ms'] is int)
-            ? (data['scan_duration_ms'] as int).toDouble()
-            : (data['scan_duration_ms'] as double?) ?? 0.0;
-
         totalCount++;
         if (uniqueEpcs.add(epc)) {
           uniqueCount++;
