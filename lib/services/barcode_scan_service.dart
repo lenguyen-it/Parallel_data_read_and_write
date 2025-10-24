@@ -148,13 +148,14 @@ class BarcodeScanService {
             data = jsonDecode(event);
           } catch (_) {
             // Nếu không parse được, coi như string thuần
-            return;
+            data = {'barcode': event};
           }
         } else {
           return;
         }
 
         final code = data['barcode']?.toString() ?? '';
+        debugPrint('Scanned barcode: $code');
         if (code.trim().isEmpty) return;
 
         final normalized = _normalizeCode(code);
@@ -167,12 +168,15 @@ class BarcodeScanService {
         debugPrint('Tổng: $totalCount | Duy nhất: $uniqueCount');
 
         final processedData = {
-          'epc': normalized,
+          'epc': code, 
           'scan_duration_ms': data['barcode_scan_duration_ms'] ?? 0,
         };
 
         _codeController.add(processedData);
-        _addToBatch(processedData);
+        _addToBatch({
+          'epc': normalized, 
+          'scan_duration_ms': data['barcode_scan_duration_ms'] ?? 0,
+        });
       },
       onError: (err) {
         _codeController.addError(err.toString());
