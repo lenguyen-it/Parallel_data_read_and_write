@@ -39,6 +39,11 @@ class TempStorageService {
       }
     }
 
+    if (await _tempFile!.exists()) {
+      await _tempFile!.delete();
+      debugPrint('✅ Đã xóa file tạm cũ khi khởi động');
+    }
+
     if (!await _tempFile!.exists()) {
       await _tempFile!.create(recursive: true);
 
