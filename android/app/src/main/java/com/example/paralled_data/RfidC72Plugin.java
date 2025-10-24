@@ -59,8 +59,13 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
     //Hashmap data
     // private Map<String, Object> tagDataList = new HashMap<>();
 
+    // Thời gian quét của rfid
     private long lastScanStartTime = 0;
     private long lastScanStartTimeNs = 0;
+
+    // Thời gian quét barcode/QRcode
+    private long lastBarcodeScanTime = 0;
+    private long lastBarcodeScanTimeNs = 0;
 
 
     // Hàm chuyển từ HEX sang ASCII
@@ -486,7 +491,9 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
         }
     }
 
+    // ===========================================
     // ================= BARCODE =================
+    // ===========================================
     private void connectBarcode(MethodChannel.Result result) {
         new Thread(() -> {
             int maxRetries = 3;
@@ -554,15 +561,18 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                                     String scannedBarcode = barcodeEntity.getBarcodeData();
                                     Log.d(TAG, "✅ Barcode scanned: " + scannedBarcode);
 
+                                    //Gửi dữ liệu map barcode
+                                    sendBarcodeData(scannedBarcode);
+
                                     // Gửi dữ liệu về Flutter
-                                    scanHandler.post(() -> {
-                                        if (barcodeSink != null) {
-                                            barcodeSink.success(scannedBarcode);
-                                            Log.d(TAG, "📤 Sent to Flutter: " + scannedBarcode);
-                                        } else {
-                                            Log.e(TAG, "❌ barcodeSink is null!");
-                                        }
-                                    });
+                                    // scanHandler.post(() -> {
+                                    //     if (barcodeSink != null) {
+                                    //         barcodeSink.success(scannedBarcode);
+                                    //         Log.d(TAG, "📤 Sent to Flutter: " + scannedBarcode);
+                                    //     } else {
+                                    //         Log.e(TAG, "❌ barcodeSink is null!");
+                                    //     }
+                                    // });
 
                                     // Luôn dừng scan sau success để tắt laser
                                     synchronized (barcodeLock) {
@@ -583,6 +593,8 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                                                 if (barcodeDecoder != null && isBarcodeScanning) {
                                                     Log.d(TAG, "🔄 Auto restart scan...");
                                                     try {
+                                                        lastBarcodeScanTimeNs = System.nanoTime();
+
                                                         barcodeDecoder.startScan();
                                                     } catch (Exception e) {
                                                         Log.e(TAG, "Error restarting scan: " + e.getMessage());
@@ -595,7 +607,7 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                                                     }
                                                 }
                                             }
-                                        }, 300);
+                                        }, 100);
                                     }
                                 } else {
                                     Log.e(TAG, "❌ Decode FAIL - resultCode: " + resultCode);
@@ -605,6 +617,8 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
                                                 if (barcodeDecoder != null && isBarcodeScanning) {
                                                     Log.d(TAG, "🔄 Retry scan after failure...");
                                                     try {
+                                                        lastBarcodeScanTimeNs = System.nanoTime();
+
                                                         barcodeDecoder.startScan();
                                                     } catch (Exception e) {
                                                         Log.e(TAG, "Error retrying scan: " + e.getMessage());
@@ -642,6 +656,29 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             }
         }).start();
     }
+
+        private void sendBarcodeData(String barcodeData) {
+            if (barcodeSink != null && barcodeData != null) {
+                Map<String, Object> dataMap = new HashMap<>();
+                
+                // Tính thời gian quét
+                long barcodeEndTimeNs = System.nanoTime();
+                long barcodeScanDurationNs = (lastBarcodeScanTimeNs > 0) 
+                        ? (barcodeEndTimeNs - lastBarcodeScanTimeNs) 
+                        : 0;
+                double barcodeScanDurationMs = barcodeScanDurationNs / 1_000_000.0;
+                
+                dataMap.put("barcode", barcodeData);
+                dataMap.put("barcode_scan_duration_ms", barcodeScanDurationMs);
+                dataMap.put("barcode_scan_duration_ns", barcodeScanDurationNs);
+                
+                scanHandler.post(() -> barcodeSink.success(dataMap));
+                
+                Log.d(TAG, "Barcode Data Sent: " + barcodeData + 
+                    " | Thời gian quét: " + barcodeScanDurationMs + " ms (" + barcodeScanDurationNs + " ns)");
+            }
+        }
+
 
     private void scanBarcodeContinuous(MethodChannel.Result result) {
         try {
@@ -731,13 +768,17 @@ public class RfidC72Plugin implements FlutterPlugin, ActivityAware {
             try {
                 isBarcodeScanning = continuous;
 
-                Log.i(TAG, "Calling startScan()...");
+                lastBarcodeScanTimeNs = System.nanoTime();
+
+                Log.i(TAG, "Calling startScan()... barcodeSink: " + (barcodeSink != null));
                 barcodeDecoder.startScan();
                 Log.i(TAG, "startScan() called successfully");
 
                 scanHandler.post(() -> {
                     if (barcodeSink != null) {
                         barcodeSink.success("SCANNING");
+                    } else {
+                    Log.e(TAG, "barcodeSink is null when starting scan!");
                     }
                 });
 
