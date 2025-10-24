@@ -981,197 +981,434 @@ class _RfidTestBluetoothConnectState extends State<RfidTestBluetoothConnect> {
   }
 
   // =================== Xem file tạm ===================
+  // Future<void> _showTempFileDialog() async {
+  //   try {
+  //     final tempData = List<Map<String, dynamic>>.from(
+  //       await TempStorageService().readAllTempData(),
+  //     ).reversed.toList();
+
+  //     final count = tempData.length;
+  //     final filePath = await TempStorageService().getTempFilePath();
+
+  //     if (!mounted) return;
+
+  //     showDialog(
+  //       context: context,
+  //       builder: (context) => Dialog(
+  //         child: Container(
+  //           width: MediaQuery.of(context).size.width * 0.9,
+  //           height: MediaQuery.of(context).size.height * 0.8,
+  //           padding: const EdgeInsets.all(16),
+  //           child: Column(
+  //             crossAxisAlignment: CrossAxisAlignment.start,
+  //             children: [
+  //               Row(
+  //                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  //                 children: [
+  //                   Column(
+  //                     crossAxisAlignment: CrossAxisAlignment.start,
+  //                     children: [
+  //                       const Text(
+  //                         'Dữ liệu File Tạm',
+  //                         style: TextStyle(
+  //                           fontSize: 18,
+  //                           fontWeight: FontWeight.bold,
+  //                         ),
+  //                       ),
+  //                       Row(
+  //                         children: [
+  //                           Icon(
+  //                             _encryptionInitialized
+  //                                 ? Icons.lock
+  //                                 : Icons.lock_open,
+  //                             size: 14,
+  //                             color: _encryptionInitialized
+  //                                 ? Colors.green
+  //                                 : Colors.orange,
+  //                           ),
+  //                           const SizedBox(width: 4),
+  //                           Text(
+  //                             _encryptionInitialized
+  //                                 ? 'Đã mã hóa'
+  //                                 : 'Chưa mã hóa',
+  //                             style: TextStyle(
+  //                               fontSize: 11,
+  //                               color: _encryptionInitialized
+  //                                   ? Colors.green
+  //                                   : Colors.orange,
+  //                             ),
+  //                           ),
+  //                         ],
+  //                       ),
+  //                     ],
+  //                   ),
+  //                   IconButton(
+  //                     icon: const Icon(Icons.close),
+  //                     onPressed: () => Navigator.pop(context),
+  //                   ),
+  //                 ],
+  //               ),
+  //               const SizedBox(height: 8),
+  //               Text(
+  //                 'Tổng số: $count records',
+  //                 style: const TextStyle(
+  //                   fontSize: 14,
+  //                   fontWeight: FontWeight.bold,
+  //                   color: Colors.blue,
+  //                 ),
+  //               ),
+  //               const SizedBox(height: 4),
+  //               Text(
+  //                 'Đường dẫn: $filePath',
+  //                 style: const TextStyle(fontSize: 11, color: Colors.grey),
+  //               ),
+  //               const Divider(height: 20),
+  //               Expanded(
+  //                 child: tempData.isEmpty
+  //                     ? const Center(child: Text('File tạm trống'))
+  //                     : ListView.builder(
+  //                         itemCount: tempData.length,
+  //                         itemBuilder: (context, index) {
+  //                           final item = tempData[index];
+  //                           final jsonStr = const JsonEncoder.withIndent('  ')
+  //                               .convert(item);
+
+  //                           return Card(
+  //                             margin: const EdgeInsets.only(bottom: 12),
+  //                             child: ExpansionTile(
+  //                               title: Text(
+  //                                 '${index + 1}. ${item['epc'] ?? 'N/A'}',
+  //                                 style: const TextStyle(
+  //                                   fontSize: 13,
+  //                                   fontWeight: FontWeight.bold,
+  //                                 ),
+  //                               ),
+  //                               subtitle: Text(
+  //                                 'Status: ${item['sync_status'] ?? 'N/A'}',
+  //                                 style: const TextStyle(fontSize: 11),
+  //                               ),
+  //                               children: [
+  //                                 Container(
+  //                                   width: double.infinity,
+  //                                   padding: const EdgeInsets.all(12),
+  //                                   color: Colors.grey.shade100,
+  //                                   child: SelectableText(
+  //                                     jsonStr,
+  //                                     style: const TextStyle(
+  //                                       fontSize: 11,
+  //                                       fontFamily: 'monospace',
+  //                                     ),
+  //                                   ),
+  //                                 ),
+  //                               ],
+  //                             ),
+  //                           );
+  //                         },
+  //                       ),
+  //               ),
+  //               const SizedBox(height: 12),
+
+  //               // ✅ Nút Export/Download
+  //               Wrap(
+  //                 spacing: 8,
+  //                 runSpacing: 8,
+  //                 alignment: WrapAlignment.center,
+  //                 children: [
+  //                   ElevatedButton.icon(
+  //                     onPressed: () => _showDownloadOptionsDialog(),
+  //                     icon: const Icon(Icons.download, size: 18),
+  //                     label: const Text('Tải về'),
+  //                     style: ElevatedButton.styleFrom(
+  //                       backgroundColor: Colors.blue,
+  //                     ),
+  //                   ),
+  //                   ElevatedButton.icon(
+  //                     onPressed: () => _showImportOptionsDialog(),
+  //                     icon: const Icon(Icons.upload, size: 18),
+  //                     label: const Text('Import'),
+  //                     style: ElevatedButton.styleFrom(
+  //                       backgroundColor: Colors.green,
+  //                     ),
+  //                   ),
+  //                   ElevatedButton.icon(
+  //                     onPressed: () async {
+  //                       final confirm = await showDialog<bool>(
+  //                         context: context,
+  //                         builder: (context) => AlertDialog(
+  //                           title: const Text('Xác nhận'),
+  //                           content: const Text(
+  //                               'Bạn có chắc muốn xóa toàn bộ dữ liệu file tạm?'),
+  //                           actions: [
+  //                             TextButton(
+  //                               onPressed: () => Navigator.pop(context, false),
+  //                               child: const Text('Hủy'),
+  //                             ),
+  //                             TextButton(
+  //                               onPressed: () => Navigator.pop(context, true),
+  //                               child: const Text('Xóa'),
+  //                             ),
+  //                           ],
+  //                         ),
+  //                       );
+
+  //                       if (confirm == true) {
+  //                         await TempStorageService().clearTempFile();
+  //                         Navigator.pop(context);
+  //                         ScaffoldMessenger.of(context).showSnackBar(
+  //                           const SnackBar(
+  //                               content: Text('Đã xóa dữ liệu file tạm')),
+  //                         );
+  //                       }
+  //                     },
+  //                     icon: const Icon(Icons.delete, size: 18),
+  //                     label: const Text('Xóa file tạm'),
+  //                     style: ElevatedButton.styleFrom(
+  //                       backgroundColor: Colors.red,
+  //                     ),
+  //                   ),
+  //                 ],
+  //               ),
+  //             ],
+  //           ),
+  //         ),
+  //       ),
+  //     );
+  //   } catch (e) {
+  //     debugPrint('❌ Lỗi khi hiển thị file tạm: $e');
+  //     if (!mounted) return;
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       SnackBar(content: Text('Lỗi: $e')),
+  //     );
+  //   }
+  // }
+
   Future<void> _showTempFileDialog() async {
     try {
-      final tempData = List<Map<String, dynamic>>.from(
-        await TempStorageService().readAllTempData(),
-      ).reversed.toList();
+      const int pageSize = 20;
+      int offset = 0;
 
-      final count = tempData.length;
+      final totalCount = await TempStorageService().getTempFileRecordCount();
       final filePath = await TempStorageService().getTempFilePath();
+
+      // Đọc 20 record đầu tiên
+      List<Map<String, dynamic>> visibleData =
+          await TempStorageService().readTempDataChunk(offset, pageSize);
 
       if (!mounted) return;
 
       showDialog(
         context: context,
-        builder: (context) => Dialog(
-          child: Container(
-            width: MediaQuery.of(context).size.width * 0.9,
-            height: MediaQuery.of(context).size.height * 0.8,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Dữ liệu File Tạm',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Row(
-                          children: [
-                            Icon(
-                              _encryptionInitialized
-                                  ? Icons.lock
-                                  : Icons.lock_open,
-                              size: 14,
-                              color: _encryptionInitialized
-                                  ? Colors.green
-                                  : Colors.orange,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _encryptionInitialized
-                                  ? 'Đã mã hóa'
-                                  : 'Chưa mã hóa',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: _encryptionInitialized
-                                    ? Colors.green
-                                    : Colors.orange,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Tổng số: $count records',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Đường dẫn: $filePath',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-                const Divider(height: 20),
-                Expanded(
-                  child: tempData.isEmpty
-                      ? const Center(child: Text('File tạm trống'))
-                      : ListView.builder(
-                          itemCount: tempData.length,
-                          itemBuilder: (context, index) {
-                            final item = tempData[index];
-                            final jsonStr = const JsonEncoder.withIndent('  ')
-                                .convert(item);
+        builder: (context) {
+          final ScrollController scrollController = ScrollController();
 
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: ExpansionTile(
-                                title: Text(
-                                  '${index + 1}. ${item['epc'] ?? 'N/A'}',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+          return StatefulBuilder(
+            builder: (context, setState) {
+              // Lắng nghe sự kiện cuộn để load thêm
+              scrollController.addListener(() async {
+                if (scrollController.position.pixels >=
+                    scrollController.position.maxScrollExtent - 100) {
+                  if (visibleData.length < totalCount) {
+                    offset += pageSize;
+                    final newChunk = await TempStorageService()
+                        .readTempDataChunk(offset, pageSize);
+                    setState(() {
+                      visibleData.addAll(newChunk);
+                    });
+                  }
+                }
+              });
+
+              return Dialog(
+                child: Container(
+                  width: MediaQuery.of(context).size.width * 0.9,
+                  height: MediaQuery.of(context).size.height * 0.8,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Dữ liệu File Tạm',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                subtitle: Text(
-                                  'Status: ${item['sync_status'] ?? 'N/A'}',
-                                  style: const TextStyle(fontSize: 11),
-                                ),
+                              ),
+                              Row(
                                 children: [
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(12),
-                                    color: Colors.grey.shade100,
-                                    child: SelectableText(
-                                      jsonStr,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontFamily: 'monospace',
-                                      ),
+                                  Icon(
+                                    _encryptionInitialized
+                                        ? Icons.lock
+                                        : Icons.lock_open,
+                                    size: 14,
+                                    color: _encryptionInitialized
+                                        ? Colors.green
+                                        : Colors.orange,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _encryptionInitialized
+                                        ? 'Đã mã hóa'
+                                        : 'Chưa mã hóa',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: _encryptionInitialized
+                                          ? Colors.green
+                                          : Colors.orange,
                                     ),
                                   ),
                                 ],
                               ),
-                            );
-                          },
-                        ),
-                ),
-                const SizedBox(height: 12),
-
-                // ✅ Nút Export/Download
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () => _showDownloadOptionsDialog(),
-                      icon: const Icon(Icons.download, size: 18),
-                      label: const Text('Tải về'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () => _showImportOptionsDialog(),
-                      icon: const Icon(Icons.upload, size: 18),
-                      label: const Text('Import'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Xác nhận'),
-                            content: const Text(
-                                'Bạn có chắc muốn xóa toàn bộ dữ liệu file tạm?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Hủy'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                child: const Text('Xóa'),
-                              ),
                             ],
                           ),
-                        );
-
-                        if (confirm == true) {
-                          await TempStorageService().clearTempFile();
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text('Đã xóa dữ liệu file tạm')),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.delete, size: 18),
-                      label: const Text('Xóa file tạm'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tổng số: $totalCount records',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Đường dẫn: $filePath',
+                        style:
+                            const TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                      const Divider(height: 20),
+
+                      // Danh sách dữ liệu (lazy load)
+                      Expanded(
+                        child: visibleData.isEmpty
+                            ? const Center(child: Text('File tạm trống'))
+                            : ListView.builder(
+                                controller: scrollController,
+                                itemCount: visibleData.length,
+                                itemBuilder: (context, index) {
+                                  final item = visibleData[index];
+                                  final jsonStr =
+                                      const JsonEncoder.withIndent('  ')
+                                          .convert(item);
+
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    child: ExpansionTile(
+                                      title: Text(
+                                        '${index + 1}. ${item['epc'] ?? 'N/A'}',
+                                        style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      subtitle: Text(
+                                        'Status: ${item['sync_status'] ?? 'N/A'}',
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                      children: [
+                                        Container(
+                                          width: double.infinity,
+                                          padding: const EdgeInsets.all(12),
+                                          color: Colors.grey.shade100,
+                                          child: SelectableText(
+                                            jsonStr,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              fontFamily: 'monospace',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // Các nút
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () => _showDownloadOptionsDialog(),
+                            icon: const Icon(Icons.download, size: 18),
+                            label: const Text('Tải về'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () => _showImportOptionsDialog(),
+                            icon: const Icon(Icons.upload, size: 18),
+                            label: const Text('Import'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Xác nhận'),
+                                  content: const Text(
+                                      'Bạn có chắc muốn xóa toàn bộ dữ liệu file tạm?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Hủy'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      child: const Text('Xóa'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                await TempStorageService().clearTempFile();
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Đã xóa dữ liệu file tạm')),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.delete, size: 18),
+                            label: const Text('Xóa file tạm'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-        ),
+              );
+            },
+          );
+        },
       );
     } catch (e) {
       debugPrint('❌ Lỗi khi hiển thị file tạm: $e');

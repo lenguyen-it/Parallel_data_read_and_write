@@ -839,4 +839,47 @@ class TempStorageService {
       };
     }
   }
+
+  Future<File> _getTempFile() async {
+    await _initTempFile();
+    return _tempFile!;
+  }
+
+  Future<int> getTempFileRecordCount() async {
+    final file = await _getTempFile();
+    if (!await file.exists()) return 0;
+
+    final encryptedContent = await file.readAsString();
+    if (encryptedContent.trim().isEmpty) return 0;
+
+    try {
+      final decryptedContent = _encryption.decryptData(encryptedContent);
+      final List<dynamic> jsonList = jsonDecode(decryptedContent);
+      return jsonList.length;
+    } catch (e) {
+      debugPrint('❌ Lỗi khi đọc số lượng record file tạm: $e');
+      return 0;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> readTempDataChunk(
+      int offset, int limit) async {
+    final file = await _getTempFile();
+    if (!await file.exists()) return [];
+
+    final encryptedContent = await file.readAsString();
+    if (encryptedContent.trim().isEmpty) return [];
+
+    try {
+      // ✅ Giải mã nội dung trước khi parse JSON
+      final decryptedContent =_encryption.decryptData(encryptedContent);
+
+      final List<dynamic> jsonList = jsonDecode(decryptedContent);
+      final chunk = jsonList.skip(offset).take(limit).toList();
+      return List<Map<String, dynamic>>.from(chunk);
+    } catch (e) {
+      debugPrint('❌ Lỗi khi đọc file tạm (chunk): $e');
+      return [];
+    }
+  }
 }
