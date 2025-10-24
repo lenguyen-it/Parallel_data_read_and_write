@@ -33,6 +33,8 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
   int _currentDbCount = 0;
   int _lastSyncSpeed = 0;
 
+  String? _latestRawCode;
+
   final List<DateTime> _scanTimestamps = [];
   final List<DateTime> _syncTimestamps = [];
 
@@ -72,6 +74,7 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
       if (mounted) {
         setState(() {
           _scanTimestamps.add(DateTime.now());
+          _latestRawCode = data['epc'];
         });
       }
     });
@@ -161,9 +164,10 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     await _loadLocal();
 
     setState(() => _isScanning = false);
+    setState(
+        () => _latestRawCode = null); 
   }
 
-  /// ✅ Upload file (hỗ trợ cả encrypted và plain)
   Future<void> _handleUploadFile() async {
     setState(() => _isLoading = true);
     try {
@@ -198,7 +202,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Dialog xem file tạm với các tùy chọn mới
   Future<void> _showTempFileDialog() async {
     try {
       final tempData = List<Map<String, dynamic>>.from(
@@ -224,7 +227,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
-                      // 👈 Giới hạn chiều rộng của cột bên trái
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -234,8 +236,7 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),
-                            overflow:
-                                TextOverflow.ellipsis, // tránh text quá dài
+                            overflow: TextOverflow.ellipsis,
                           ),
                           Row(
                             children: [
@@ -250,7 +251,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                               ),
                               const SizedBox(width: 4),
                               Flexible(
-                                // 👈 thêm Flexible để text không tràn
                                 child: Text(
                                   _encryptionInitialized
                                       ? 'Đã mã hóa'
@@ -335,8 +335,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
                         ),
                 ),
                 const SizedBox(height: 12),
-
-                // ✅ Nút Export/Download
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -410,7 +408,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Dialog chọn định dạng download
   Future<void> _showDownloadOptionsDialog() async {
     await showDialog(
       context: context,
@@ -462,7 +459,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     );
   }
 
-  /// ✅ Download file encrypted
   Future<void> _downloadEncrypted() async {
     try {
       final path = await TempStorageService().downloadEncryptedFile();
@@ -488,7 +484,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Download file JSON (đã giải mã)
   Future<void> _downloadJson() async {
     try {
       final path = await TempStorageService().downloadDecryptedJson();
@@ -514,7 +509,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Download file CSV (đã giải mã)
   Future<void> _downloadCsv() async {
     try {
       final path = await TempStorageService().downloadDecryptedCSV();
@@ -540,7 +534,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Dialog chọn loại import
   Future<void> _showImportOptionsDialog() async {
     await showDialog(
       context: context,
@@ -582,7 +575,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     );
   }
 
-  /// ✅ Import file encrypted
   Future<void> _importEncrypted() async {
     setState(() => _isLoading = true);
     try {
@@ -610,7 +602,6 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     }
   }
 
-  /// ✅ Import file plain (JSON/CSV)
   Future<void> _importPlain() async {
     setState(() => _isLoading = true);
     try {
@@ -636,6 +627,38 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  Widget _buildScannedLastest() {
+    return Container(
+      width: double.infinity,
+      color: Colors.blue.shade50,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'QRcode mới nhất',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.blue,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            _latestRawCode != null
+                ? 'Mã: $_latestRawCode'
+                : 'Chưa có mã barcode mới',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildScannedList() {
@@ -811,6 +834,8 @@ class _BarcodeScanPageState extends State<BarcodeScanPage> {
               ],
             ),
           ),
+          const Divider(height: 1),
+          _buildScannedLastest(),
           const Divider(height: 1),
           Expanded(
             child: Row(
